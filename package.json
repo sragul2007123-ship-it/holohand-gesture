@@ -17,6 +17,7 @@
     "preview": "vite preview",
     "test": "node scripts/test-evaluation.mjs",
     "test:explorer": "node scripts/test-universal-explorer.mjs",
+    "test:semantic": "node scripts/test-semantic-components.mjs",
     "postinstall": "node scripts/setup.mjs"
   },
   "dependencies": {

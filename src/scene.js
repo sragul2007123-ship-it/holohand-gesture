@@ -190,7 +190,23 @@ export class HoloScene {
           if (Math.random() < 160 / Math.max(160, n)) samples.push(x, y, z, inst.dir[0], inst.dir[1], inst.dir[2]);
         }
       });
-      meta.push({ name: p.name, desc: p.desc, color: p.color, anchors, samples: new Float32Array(samples) });
+      meta.push({
+        id: `procedural-${p.id || pi}`,
+        name: p.name,
+        displayName: p.name,
+        sourceName: p.name,
+        nodeName: p.name,
+        meshName: '',
+        suggestedName: null,
+        nameSource: 'metadata',
+        confidence: 1.0,
+        verificationStatus: 'verified',
+        desc: p.desc,
+        role: p.desc,
+        color: p.color,
+        anchors,
+        samples: new Float32Array(samples)
+      });
     });
 
     const geo = new THREE.BufferGeometry();
@@ -379,7 +395,7 @@ export class HoloScene {
     return best;
   }
 
-  /** Screen position of each part's label anchor. */
+  /** Screen position of each part's label anchor with complete semantic metadata. */
   labelPoints() {
     const e = this.shownExplode;
     const v = new THREE.Vector3();
@@ -388,7 +404,44 @@ export class HoloScene {
       const { a, d } = p.anchors[0];
       const off = this.uniforms.uOff.value[i];
       const s = this._toScreen([a[0] + d[0] * e + off.x, a[1] + d[1] * e + off.y, a[2] + d[2] * e + off.z], v);
-      return { i, x: s.x, y: s.y, name: p.name, color: p.color };
+      return {
+        i,
+        x: s.x,
+        y: s.y,
+        name: p.displayName || p.name,
+        displayName: p.displayName || p.name,
+        sourceName: p.sourceName || p.name,
+        suggestedName: p.suggestedName || null,
+        nameSource: p.nameSource || 'metadata',
+        confidence: p.confidence ?? 1.0,
+        verificationStatus: p.verificationStatus || 'verified',
+        role: p.role || p.desc || '',
+        uncertaintyNotice: p.uncertaintyNotice || null,
+        color: p.color
+      };
+    });
+  }
+
+  /**
+   * Update component metadata in-place without rebuilding geometry or particle buffers.
+   * @param {Array<Object>} updatedMetaList
+   */
+  updatePartMetadata(updatedMetaList) {
+    if (!Array.isArray(updatedMetaList)) return;
+    updatedMetaList.forEach((meta, idx) => {
+      if (this.parts[idx]) {
+        if (meta.displayName) {
+          this.parts[idx].displayName = meta.displayName;
+          this.parts[idx].name = meta.displayName; // backward compatibility
+        }
+        if (meta.suggestedName !== undefined) this.parts[idx].suggestedName = meta.suggestedName;
+        if (meta.nameSource) this.parts[idx].nameSource = meta.nameSource;
+        if (meta.confidence !== undefined) this.parts[idx].confidence = meta.confidence;
+        if (meta.verificationStatus) this.parts[idx].verificationStatus = meta.verificationStatus;
+        if (meta.desc || meta.description) this.parts[idx].desc = meta.desc || meta.description;
+        if (meta.role) this.parts[idx].role = meta.role;
+        if (meta.uncertaintyNotice) this.parts[idx].uncertaintyNotice = meta.uncertaintyNotice;
+      }
     });
   }
   centerScreen() {

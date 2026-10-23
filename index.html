@@ -92,7 +92,35 @@
     </section>
 
     <section class="partcard" id="partcard">
-      <div class="pc-name"><i id="pc-dot"></i><b id="pc-name">No part selected</b></div>
+      <div class="pc-header">
+        <div class="pc-name-group">
+          <i id="pc-dot"></i>
+          <b id="pc-name">No part selected</b>
+        </div>
+        <span id="pc-badge" class="pc-badge gone">Verified</span>
+      </div>
+
+      <!-- Semantic metadata details -->
+      <div id="pc-meta-box" class="pc-meta-box gone">
+        <div id="pc-source-row" class="pc-meta-row gone">
+          <span class="pc-meta-k">Source node:</span>
+          <code id="pc-source-val" class="pc-meta-v"></code>
+        </div>
+        <div id="pc-sugg-row" class="pc-meta-row gone">
+          <span class="pc-meta-k">AI Suggestion:</span>
+          <span id="pc-sugg-val" class="pc-meta-v sugg-text"></span>
+        </div>
+        <div id="pc-conf-row" class="pc-meta-row gone">
+          <span class="pc-meta-k">Confidence:</span>
+          <div class="pc-conf-bar"><div id="pc-conf-fill" class="pc-conf-fill"></div></div>
+          <span id="pc-conf-val" class="pc-conf-pct"></span>
+        </div>
+      </div>
+
+      <div id="pc-uncertainty" class="pc-uncertainty gone">
+        <span>⚠️ Contextual suggestion · Not verified in 3D source</span>
+      </div>
+
       <p id="pc-desc">Point at a part, or click one, to read what it does.</p>
       <button id="pc-ai-btn" class="pc-ai-btn" style="display:none">🤖 Ask AI about this part</button>
     </section>

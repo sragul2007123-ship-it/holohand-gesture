@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { componentIdentificationService, cleanSemanticName, isSemanticName } from './componentIdentification.js';
 
 const PALETTE = [
   '#4fe3e0', // Neon Cyan
@@ -21,26 +22,6 @@ function hexRgb(hex) {
   return [(n >> 16) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
 }
 
-function cleanComponentName(name, index) {
-  if (!name || typeof name !== 'string') return `Component ${index + 1}`;
-  let clean = name
-    .replace(/^Sketchfab_model_?/i, '')
-    .replace(/^RootNode_?/i, '')
-    .replace(/^Object_\d+_?/i, '')
-    .replace(/[._-]+/g, ' ')
-    .trim();
-
-  // If name became empty or generic numbers
-  if (!clean || /^\d+$/.test(clean)) {
-    return `Component ${index + 1}`;
-  }
-  // Capitalize words
-  return clean
-    .split(' ')
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(' ');
-}
-
 export class ModelLoaderService {
   constructor() {
     this.loader = new GLTFLoader();
@@ -51,15 +32,16 @@ export class ModelLoaderService {
    *
    * @param {string} url - Asset endpoint URL
    * @param {Function} [onProgress] - (percent: number, loaded: number, total: number) => void
+   * @param {Object} [modelMeta] - Optional model metadata (title, creator, etc.)
    * @returns {Promise<Object>} Processed HoloHand model entry with point-cloud geo, meshes, and parts metadata
    */
-  async loadGLB(url, onProgress = null) {
+  async loadGLB(url, onProgress = null, modelMeta = {}) {
     return new Promise((resolve, reject) => {
       this.loader.load(
         url,
         (gltf) => {
           try {
-            const entry = this.processGltf(gltf);
+            const entry = this.processGltf(gltf, modelMeta);
             resolve(entry);
           } catch (err) {
             reject(new Error(`Failed to process 3D model geometry: ${err.message}`));
@@ -80,29 +62,66 @@ export class ModelLoaderService {
 
   /**
    * Process a loaded GLTF scene graph into HoloHand-compatible geometry and components.
+   * Recursively inspects node hierarchy, extracts original metadata, and performs
+   * layered semantic naming.
+   *
+   * @param {Object} gltf - Loaded GLTF scene container
+   * @param {Object} [modelMeta] - Model metadata (title, category, tags, etc.)
    */
-  processGltf(gltf) {
+  processGltf(gltf, modelMeta = {}) {
     const root = gltf.scene || gltf.scenes[0];
     if (!root) throw new Error('GLTF contains no valid scene');
 
-    // 1. Traverse and collect all renderable mesh nodes
-    const meshes = [];
+    // 1. Recursively traverse and collect all renderable mesh nodes with hierarchy & metadata
+    const rawMeshEntries = [];
     root.updateMatrixWorld(true);
 
-    root.traverse((child) => {
-      if (child.isMesh && child.geometry) {
-        meshes.push(child);
-      }
-    });
+    function walkNode(node, parentPath) {
+      const currentName = (node.name || '').trim();
+      const nextPath = currentName ? [...parentPath, currentName] : parentPath;
 
-    if (meshes.length === 0) {
+      if (node.isMesh && node.geometry) {
+        node.geometry.computeBoundingBox();
+        const meshBox = node.geometry.boundingBox.clone().applyMatrix4(node.matrixWorld);
+        const centerV = new THREE.Vector3();
+        meshBox.getCenter(centerV);
+        const sizeV = new THREE.Vector3();
+        meshBox.getSize(sizeV);
+
+        rawMeshEntries.push({
+          mesh: node,
+          nodeName: node.name || '',
+          meshName: (node.geometry && node.geometry.name) || '',
+          parentPath: [...parentPath],
+          extras: {
+            ...(node.userData || {}),
+            ...(node.geometry?.userData || {})
+          },
+          bounds: {
+            center: [centerV.x, centerV.y, centerV.z],
+            size: [sizeV.x, sizeV.y, sizeV.z],
+            min: [meshBox.min.x, meshBox.min.y, meshBox.min.z],
+            max: [meshBox.max.x, meshBox.max.y, meshBox.max.z]
+          }
+        });
+      }
+
+      if (node.children && node.children.length > 0) {
+        for (const child of node.children) {
+          walkNode(child, nextPath);
+        }
+      }
+    }
+
+    walkNode(root, []);
+
+    if (rawMeshEntries.length === 0) {
       throw new Error('3D model contains no renderable mesh geometry.');
     }
 
     // 2. Compute overall model bounding box & center
     const overallBox = new THREE.Box3();
-    meshes.forEach((mesh) => {
-      mesh.geometry.computeBoundingBox();
+    rawMeshEntries.forEach(({ mesh }) => {
       const meshBox = mesh.geometry.boundingBox.clone().applyMatrix4(mesh.matrixWorld);
       overallBox.union(meshBox);
     });
@@ -116,39 +135,63 @@ export class ModelLoaderService {
     const scaleFactor = (FIT * 1.8) / maxDim;
 
     // 3. Extract components / parts
-    // Case A & B: Multiple meshes -> treat each distinct mesh as a selectable component
-    // Case C: Single mesh -> single component with surface analysis
     const partsMeta = [];
-    const isSingleMesh = meshes.length === 1;
+    const isSingleMesh = rawMeshEntries.length === 1;
 
     // Group meshes if there are too many (e.g. > 24) to keep within shader uniform MAXP=24
     const MAX_PARTS = 24;
-    let groupedMeshes = [];
+    let groupedEntries = [];
 
-    if (meshes.length <= MAX_PARTS) {
-      groupedMeshes = meshes.map((m, i) => ({
-        name: cleanComponentName(m.name, i),
-        meshes: [m],
-        isVerifiedName: Boolean(m.name && !m.name.startsWith('Object_'))
+    if (rawMeshEntries.length <= MAX_PARTS) {
+      groupedEntries = rawMeshEntries.map((entry, i) => ({
+        id: `part-${i}`,
+        nodeName: entry.nodeName,
+        meshName: entry.meshName,
+        parentPath: entry.parentPath,
+        extras: entry.extras,
+        bounds: entry.bounds,
+        meshes: [entry.mesh]
       }));
     } else {
-      // Chunk meshes spatially or by hierarchy into MAX_PARTS
-      const step = Math.ceil(meshes.length / MAX_PARTS);
-      for (let i = 0; i < meshes.length; i += step) {
-        const chunk = meshes.slice(i, i + step);
-        const firstName = chunk[0].name;
-        groupedMeshes.push({
-          name: cleanComponentName(firstName, Math.floor(i / step)),
-          meshes: chunk,
-          isVerifiedName: false
+      // Chunk meshes into MAX_PARTS while keeping primary parentPath and names
+      const step = Math.ceil(rawMeshEntries.length / MAX_PARTS);
+      for (let i = 0; i < rawMeshEntries.length; i += step) {
+        const chunk = rawMeshEntries.slice(i, i + step);
+        const first = chunk[0];
+        groupedEntries.push({
+          id: `part-${Math.floor(i / step)}`,
+          nodeName: first.nodeName,
+          meshName: first.meshName,
+          parentPath: first.parentPath,
+          extras: first.extras,
+          bounds: first.bounds,
+          meshes: chunk.map((c) => c.mesh)
         });
+      }
+    }
+
+    // Run semantic identification across all grouped parts
+    const classifiedComponents = componentIdentificationService.identifyComponents(
+      groupedEntries,
+      modelMeta
+    );
+
+    // If single mesh, adapt display name and description
+    if (isSingleMesh && classifiedComponents.length > 0) {
+      const comp0 = classifiedComponents[0];
+      if (comp0.verificationStatus === 'unverified') {
+        comp0.displayName = `${modelMeta.title || modelMeta.name || 'Model'} (Integrated Mesh)`;
+        comp0.verificationStatus = 'verified';
+        comp0.nameSource = 'metadata';
+        comp0.confidence = 1.0;
+        comp0.description = 'Single integrated 3D mesh structure. Exploded views are disabled; use rotation and zoom for surface inspection.';
       }
     }
 
     // Calculate vertex counts for adaptive sampling
     let totalModelVertices = 0;
-    meshes.forEach((m) => {
-      const posAttr = m.geometry.getAttribute('position');
+    rawMeshEntries.forEach(({ mesh }) => {
+      const posAttr = mesh.geometry.getAttribute('position');
       if (posAttr) totalModelVertices += posAttr.count;
     });
 
@@ -156,7 +199,7 @@ export class ModelLoaderService {
     let totalSampledPoints = 0;
 
     // First pass: determine exact sampled count
-    const sampledCounts = groupedMeshes.map((part) => {
+    const sampledCounts = groupedEntries.map((part) => {
       let partVertCount = 0;
       part.meshes.forEach((m) => {
         const pos = m.geometry.getAttribute('position');
@@ -178,7 +221,7 @@ export class ModelLoaderService {
     let pointOffset = 0;
     let maxExplodedRadius = 0;
 
-    groupedMeshes.forEach((part, partIdx) => {
+    groupedEntries.forEach((part, partIdx) => {
       const colorHex = PALETTE[partIdx % PALETTE.length];
       const rgb = hexRgb(colorHex);
 
@@ -299,11 +342,39 @@ export class ModelLoaderService {
         partPointsWritten++;
       }
 
+      const compInfo = classifiedComponents[partIdx] || {
+        id: `part-${partIdx}`,
+        displayName: `Unnamed part ${partIdx + 1}`,
+        sourceName: `node_${partIdx}`,
+        nodeName: `node_${partIdx}`,
+        meshName: '',
+        suggestedName: null,
+        nameSource: 'fallback',
+        confidence: 0.1,
+        verificationStatus: 'unverified',
+        description: 'Structural component node',
+        role: 'Structural component',
+        parentPath: [],
+        bounds: null,
+        extras: {}
+      };
+
       partsMeta.push({
-        name: part.name,
-        desc: isSingleMesh
-          ? 'Integrated single-mesh 3D surface structure.'
-          : (part.isVerifiedName ? `Verified component: ${part.name}` : `Structural component node ${partIdx + 1}`),
+        id: compInfo.id,
+        name: compInfo.displayName, // backward compatibility
+        displayName: compInfo.displayName,
+        sourceName: compInfo.sourceName,
+        nodeName: compInfo.nodeName,
+        meshName: compInfo.meshName,
+        suggestedName: compInfo.suggestedName,
+        nameSource: compInfo.nameSource,
+        confidence: compInfo.confidence,
+        verificationStatus: compInfo.verificationStatus,
+        desc: compInfo.description || compInfo.role,
+        role: compInfo.role || compInfo.description,
+        parentPath: compInfo.parentPath,
+        bounds: compInfo.bounds,
+        extras: compInfo.extras,
         color: colorHex,
         anchors,
         samples: new Float32Array(samples)
@@ -344,7 +415,7 @@ export class ModelLoaderService {
       fit: FIT / Math.max(0.5, maxExplodedRadius),
       count: totalSampledPoints,
       isSingleMesh,
-      meshCount: meshes.length,
+      meshCount: rawMeshEntries.length,
       vertexCount: totalModelVertices
     };
   }

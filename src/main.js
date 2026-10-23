@@ -13,6 +13,7 @@ import { clamp } from './utils.js';
 import { sketchfabProvider } from './providers/sketchfabProvider.js';
 import { modelSearchService } from './services/modelSearch.js';
 import { modelLoaderService } from './services/modelLoader.js';
+import { componentIdentificationService } from './services/componentIdentification.js';
 
 const $ = (id) => document.getElementById(id);
 const video = $('video');
@@ -107,19 +108,101 @@ scene.onModel(scene.index, MODELS[scene.index], scene.cache.get(scene.index));
 
 function showPart(i) {
   const p = i >= 0 ? scene.parts[i] : null;
-  $('pc-name').textContent = p ? p.name : 'No part selected';
-  $('pc-desc').textContent = p ? p.desc : (
-    scene.isSingleMesh
-      ? 'Single integrated mesh. Exploded view is disabled; use rotation and zoom to inspect surfaces.'
-      : 'Point at a part, or click one, to read what it does.'
-  );
-  $('pc-dot').style.background = p ? p.color : '#555a70';
+  const nameEl = $('pc-name');
+  const badgeEl = $('pc-badge');
+  const metaBoxEl = $('pc-meta-box');
+  const sourceRowEl = $('pc-source-row');
+  const sourceValEl = $('pc-source-val');
+  const suggRowEl = $('pc-sugg-row');
+  const suggValEl = $('pc-sugg-val');
+  const confRowEl = $('pc-conf-row');
+  const confFillEl = $('pc-conf-fill');
+  const confValEl = $('pc-conf-val');
+  const uncertEl = $('pc-uncertainty');
+  const descEl = $('pc-desc');
+  const dotEl = $('pc-dot');
   const pcAiBtn = $('pc-ai-btn');
-  if (pcAiBtn) {
-    pcAiBtn.style.display = p ? 'block' : 'none';
-    if (p) {
-      pcAiBtn.textContent = `🤖 Ask AI about "${p.name.slice(0, 18)}"`;
+
+  if (p) {
+    const dispName = p.displayName || p.name;
+    nameEl.textContent = dispName;
+    dotEl.style.background = p.color || '#4fe3e0';
+
+    // Status Badge
+    if (badgeEl) {
+      badgeEl.classList.remove('gone', 'verified', 'suggested', 'unverified');
+      const st = p.verificationStatus || 'verified';
+      badgeEl.classList.add(st);
+      badgeEl.textContent = st === 'verified' ? '✓ Verified' : (st === 'suggested' ? '⚡ Suggested' : 'Unverified');
     }
+
+    // Semantic metadata box
+    if (metaBoxEl) {
+      metaBoxEl.classList.remove('gone');
+
+      // Source node row
+      if (sourceRowEl && sourceValEl) {
+        if (p.sourceName && p.sourceName !== dispName) {
+          sourceRowEl.classList.remove('gone');
+          sourceValEl.textContent = p.sourceName;
+        } else {
+          sourceRowEl.classList.add('gone');
+        }
+      }
+
+      // Suggested name row
+      if (suggRowEl && suggValEl) {
+        if (p.suggestedName) {
+          suggRowEl.classList.remove('gone');
+          suggValEl.textContent = p.suggestedName;
+        } else {
+          suggRowEl.classList.add('gone');
+        }
+      }
+
+      // Confidence indicator
+      if (confRowEl && confFillEl && confValEl) {
+        confRowEl.classList.remove('gone');
+        const pct = Math.round((p.confidence ?? 1.0) * 100);
+        confFillEl.style.width = `${pct}%`;
+        confFillEl.style.background = p.verificationStatus === 'verified'
+          ? '#6ff0a8'
+          : (p.verificationStatus === 'suggested' ? '#f2c94c' : '#8f95aa');
+        confValEl.textContent = `${pct}%`;
+      }
+    }
+
+    // Uncertainty disclaimer
+    if (uncertEl) {
+      if (p.verificationStatus === 'suggested') {
+        uncertEl.classList.remove('gone');
+      } else {
+        uncertEl.classList.add('gone');
+      }
+    }
+
+    // Description / Role
+    if (descEl) {
+      descEl.textContent = p.desc || p.role || 'Component structure under inspection.';
+    }
+
+    // AI Button
+    if (pcAiBtn) {
+      pcAiBtn.style.display = 'block';
+      pcAiBtn.textContent = `🤖 Ask AI about "${dispName.slice(0, 18)}"`;
+    }
+  } else {
+    nameEl.textContent = 'No part selected';
+    dotEl.style.background = '#555a70';
+    if (badgeEl) badgeEl.classList.add('gone');
+    if (metaBoxEl) metaBoxEl.classList.add('gone');
+    if (uncertEl) uncertEl.classList.add('gone');
+    if (descEl) {
+      descEl.textContent = scene.isSingleMesh
+        ? 'Single integrated mesh. Exploded view is disabled; use rotation and zoom to inspect surfaces.'
+        : 'Point at a part, or click one, to read what it does.';
+    }
+    if (pcAiBtn) pcAiBtn.style.display = 'none';
   }
 }
 
@@ -697,6 +780,12 @@ async function loadModelIntoHologram(model) {
       const mb = (loaded / (1024 * 1024)).toFixed(1);
       const totalMb = total > 0 ? (total / (1024 * 1024)).toFixed(1) + ' MB' : '';
       if (detEl) detEl.textContent = `Downloaded ${mb} MB ${totalMb}`;
+    }, {
+      uid,
+      title: model.title,
+      description: model.description,
+      tags: model.tags,
+      creator: model.creator?.name
     });
 
     if (detEl) detEl.textContent = 'Sampling particle hologram geometry…';
@@ -711,6 +800,30 @@ async function loadModelIntoHologram(model) {
       license: model.license?.label || 'Public CC',
       uid: uid
     });
+
+    // Asynchronously resolve contextual suggestions for unverified parts if needed
+    if (!entry.isSingleMesh && entry.meta.some((p) => p.verificationStatus === 'unverified')) {
+      componentIdentificationService.resolveContextualSuggestions(
+        {
+          uid,
+          title: model.title,
+          description: model.description,
+          tags: model.tags,
+          creator: model.creator?.name
+        },
+        entry.meta,
+        (payload) => sketchfabProvider.requestComponentSuggestions(payload)
+      ).then((updatedComponents) => {
+        if (scene.isExternal && currentModelMeta?.uid === uid) {
+          scene.updatePartMetadata(updatedComponents);
+          if (scene.sel >= 0 || scene.hover >= 0) {
+            showPart(scene.sel >= 0 ? scene.sel : scene.hover);
+          }
+        }
+      }).catch((err) => {
+        console.warn('[HoloHand] Contextual suggestion async update warning:', err.message);
+      });
+    }
 
     modelSearchService.recordViewedModel(model);
 
@@ -769,7 +882,7 @@ async function openAiModal(subjectTitle, context = {}) {
 
   try {
     const aiData = await sketchfabProvider.getAIExplanation(subjectTitle, context);
-    renderAiExplanation(aiData, subjectTitle);
+    renderAiExplanation(aiData, subjectTitle, context);
   } catch (err) {
     if (contentEl) {
       contentEl.innerHTML = `
@@ -782,56 +895,110 @@ async function openAiModal(subjectTitle, context = {}) {
   }
 }
 
-function renderAiExplanation(data, title) {
+function renderAiExplanation(data, title, context = {}) {
   const contentEl = $('ai-body-content');
   if (!contentEl) return;
-  const components = Array.isArray(data.components) ? data.components : [];
-  const followUps = Array.isArray(data.followUpExplorations) ? data.followUpExplorations : [];
+  const components = Array.isArray(data.majorComponents || data.components) ? (data.majorComponents || data.components) : [];
+  const followUps = Array.isArray(data.exploreNext || data.followUpExplorations) ? (data.exploreNext || data.followUpExplorations) : [];
+  const isComponentMode = Boolean(context.componentName || data.componentName);
+  const isSuggested = (context.status === 'suggested') || (data.verificationStatus === 'suggested');
 
-  contentEl.innerHTML = `
-    <div class="ai-section">
-      <h4>🔍 What is this & Purpose</h4>
-      <p>${escapeHtml(data.overview || 'Exploration overview.')}</p>
-      ${data.purpose ? `<p style="margin-top:6px;"><b>Primary Purpose:</b> ${escapeHtml(data.purpose)}</p>` : ''}
-    </div>
-
-    <div class="ai-section">
-      <h4>⚙️ How It Works & Core Principles</h4>
-      <p>${escapeHtml(data.howItWorks || 'Operational mechanics.')}</p>
-    </div>
-
-    ${components.length ? `
+  if (isComponentMode) {
+    const compName = context.componentName || data.componentName;
+    const sourceNode = context.sourceName || data.sourceName;
+    contentEl.innerHTML = `
       <div class="ai-section">
-        <h4>🧩 Key Components & Structure</h4>
-        <div class="ai-components-list">
-          ${components.map((c) => `
-            <div class="ai-component-card">
-              <b>${escapeHtml(c.name)}</b>
-              <span>${escapeHtml(c.role || c.description || '')}</span>
-            </div>
-          `).join('')}
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;">
+          <h4 style="margin-bottom:0;">🔍 Component Identification</h4>
+          <span class="pc-badge ${isSuggested ? 'suggested' : 'verified'}">${isSuggested ? '⚡ Suggested Identification' : '✓ Verified 3D Component'}</span>
         </div>
+        ${isSuggested ? `
+          <div class="pc-uncertainty" style="margin-bottom:12px;padding:8px 10px;font-size:11px;line-height:1.35;">
+            ${escapeHtml(data.uncertaintyNotice || '⚠️ Uncertainty Notice: This component name is an automated contextual suggestion. The source 3D asset metadata did not provide a verified anatomical or engineering label.')}
+          </div>
+        ` : ''}
+        ${sourceNode && sourceNode !== compName ? `
+          <p style="font-size:11px;color:var(--muted);margin-bottom:8px;">Source 3D node: <code>${escapeHtml(sourceNode)}</code></p>
+        ` : ''}
+        <p><b>What it is:</b> ${escapeHtml(data.whatItIs || data.overview || `Structural component (${compName}).`)}</p>
+        <p style="margin-top:6px;"><b>Functional Role:</b> ${escapeHtml(data.whatItDoes || data.purpose || data.role || 'Performs critical functional role within assembly.')}</p>
       </div>
-    ` : ''}
 
-    ${data.practicalApplications ? `
       <div class="ai-section">
-        <h4>🚀 Real-World Applications</h4>
-        <p>${escapeHtml(data.practicalApplications)}</p>
+        <h4>🧩 Relationship to the Larger Object</h4>
+        <p>${escapeHtml(data.relationship || (context.parentModel ? `Integrated functional module within the ${context.parentModel} assembly.` : 'Integrated component within overall assembly architecture.'))}</p>
       </div>
-    ` : ''}
 
-    ${followUps.length ? `
       <div class="ai-section">
-        <h4>🔭 Recommended Next Explorations</h4>
-        <div class="ai-followup-tags">
-          ${followUps.map((term) => `
-            <button class="ai-followup-btn" data-query="${escapeHtml(term)}">🔎 ${escapeHtml(term)}</button>
-          `).join('')}
+        <h4>⚙️ How It Works & Underlying Mechanisms</h4>
+        <p>${escapeHtml(data.howItWorks || 'Operates according to physical, biomechanical, or electro-mechanical principles.')}</p>
+      </div>
+
+      ${data.practicalApplications ? `
+        <div class="ai-section">
+          <h4>🚀 Real-World Applications & Scientific Relevance</h4>
+          <p>${escapeHtml(data.practicalApplications)}</p>
         </div>
+      ` : ''}
+
+      ${followUps.length ? `
+        <div class="ai-section">
+          <h4>🔭 Recommended Next Explorations</h4>
+          <div class="ai-followup-tags">
+            ${followUps.map((term) => `
+              <button class="ai-followup-btn" data-query="${escapeHtml(term)}">🔎 ${escapeHtml(term)}</button>
+            `).join('')}
+          </div>
+        </div>
+      ` : ''}
+    `;
+  } else {
+    // Model-level overview
+    contentEl.innerHTML = `
+      <div class="ai-section">
+        <h4>🔍 What is this & Purpose</h4>
+        <p>${escapeHtml(data.overview || 'Exploration overview.')}</p>
+        ${data.purpose ? `<p style="margin-top:6px;"><b>Primary Purpose:</b> ${escapeHtml(data.purpose)}</p>` : ''}
       </div>
-    ` : ''}
-  `;
+
+      <div class="ai-section">
+        <h4>⚙️ How It Works & Core Principles</h4>
+        <p>${escapeHtml(data.howItWorks || 'Operational mechanics.')}</p>
+      </div>
+
+      ${components.length ? `
+        <div class="ai-section">
+          <h4>🧩 Key Components & Structure</h4>
+          <div class="ai-components-list">
+            ${components.map((c) => `
+              <div class="ai-component-card">
+                <b>${escapeHtml(c.name)}</b>
+                <span>${escapeHtml(c.role || c.description || '')}</span>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      ` : ''}
+
+      ${data.practicalApplications ? `
+        <div class="ai-section">
+          <h4>🚀 Real-World Applications</h4>
+          <p>${escapeHtml(data.practicalApplications)}</p>
+        </div>
+      ` : ''}
+
+      ${followUps.length ? `
+        <div class="ai-section">
+          <h4>🔭 Recommended Next Explorations</h4>
+          <div class="ai-followup-tags">
+            ${followUps.map((term) => `
+              <button class="ai-followup-btn" data-query="${escapeHtml(term)}">🔎 ${escapeHtml(term)}</button>
+            `).join('')}
+          </div>
+        </div>
+      ` : ''}
+    `;
+  }
 
   contentEl.querySelectorAll('.ai-followup-btn').forEach((btn) => {
     btn.onclick = () => {
@@ -920,9 +1087,13 @@ if (pcAiBtn) {
   pcAiBtn.onclick = () => {
     const p = scene.parts[scene.sel >= 0 ? scene.sel : scene.hover];
     if (p) {
-      openAiModal(`${p.name} · ${currentModelMeta.name}`, {
-        description: p.desc,
-        componentName: p.name,
+      const dispName = p.displayName || p.name;
+      openAiModal(`${dispName} · ${currentModelMeta.name}`, {
+        description: p.desc || p.role,
+        componentName: dispName,
+        sourceName: p.sourceName || '',
+        status: p.verificationStatus || 'verified',
+        confidence: p.confidence ?? 1.0,
         parentModel: currentModelMeta.name
       });
     }
@@ -1464,36 +1635,57 @@ function drawLabels() {
   const minX = Math.min(...pts.map((p) => p.x), c.x);
   const colR = clamp(maxX + 80, panelR + 360, W - 170);
   const colL = clamp(minX - 80, panelR + 20, W - 400);
+
   ctx.save();
   ctx.globalAlpha = e;
   ctx.font = '500 12px ui-sans-serif, system-ui, "Segoe UI", sans-serif';
   ctx.textBaseline = 'middle';
+
   const place = (list, colX, dir) => {
     list.sort((a, b) => a.y - b.y);
     const ys = list.map((p) => p.y);
-    for (let i = 1; i < ys.length; i++) if (ys[i] < ys[i - 1] + 20) ys[i] = ys[i - 1] + 20;
+    for (let i = 1; i < ys.length; i++) if (ys[i] < ys[i - 1] + 24) ys[i] = ys[i - 1] + 24;
     const over = ys.length ? ys[ys.length - 1] - (H - 90) : 0;
     if (over > 0) for (let i = 0; i < ys.length; i++) ys[i] -= over;
+
     list.forEach((p, k) => {
       const hot = p.i === scene.hover || p.i === scene.sel;
       const ly = clamp(ys[k], 24, H - 24);
-      ctx.strokeStyle = hot ? p.color : 'rgba(255,255,255,0.38)';
+      const isSuggested = p.verificationStatus === 'suggested';
+      const labelText = p.displayName || p.name;
+
+      ctx.strokeStyle = hot ? p.color : (isSuggested ? 'rgba(242, 201, 76, 0.45)' : 'rgba(255,255,255,0.38)');
       ctx.lineWidth = hot ? 1.6 : 1;
       ctx.beginPath();
       ctx.moveTo(p.x, p.y);
       ctx.lineTo(colX - dir * 16, ly);
       ctx.lineTo(colX, ly);
       ctx.stroke();
+
       ctx.fillStyle = p.color;
       ctx.beginPath();
       ctx.arc(p.x, p.y, hot ? 4 : 2.4, 0, Math.PI * 2);
       ctx.fill();
-      ctx.fillStyle = hot ? '#fff' : 'rgba(255,255,255,0.82)';
+
+      // High-contrast background pill when hovered or selected
+      if (hot) {
+        ctx.font = '600 13px ui-sans-serif, system-ui, "Segoe UI", sans-serif';
+        const textWidth = ctx.measureText(labelText).width;
+        const pillX = dir > 0 ? colX + 4 : colX - textWidth - 12;
+        ctx.fillStyle = 'rgba(11, 13, 23, 0.88)';
+        ctx.fillRect(pillX - 4, ly - 10, textWidth + 14, 20);
+        ctx.strokeStyle = p.color;
+        ctx.lineWidth = 1;
+        ctx.strokeRect(pillX - 4, ly - 10, textWidth + 14, 20);
+      }
+
+      ctx.fillStyle = hot ? '#ffffff' : (isSuggested ? '#f2c94c' : 'rgba(255,255,255,0.85)');
       ctx.font = `${hot ? 600 : 500} ${hot ? 13 : 12}px ui-sans-serif, system-ui, "Segoe UI", sans-serif`;
       ctx.textAlign = dir > 0 ? 'left' : 'right';
-      ctx.fillText(p.name, colX + dir * 6, ly);
+      ctx.fillText(labelText, colX + dir * 6, ly);
     });
   };
+
   place(right, colR, 1);
   place(left, colL, -1);
   ctx.restore();

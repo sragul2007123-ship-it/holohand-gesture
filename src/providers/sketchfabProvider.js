@@ -95,9 +95,22 @@ export class SketchfabProvider {
   }
 
   /**
+   * Request contextual component suggestions for unverified parts.
+   */
+  async requestComponentSuggestions(payload) {
+    const res = await fetch(`${this.baseUrl}/api/ai-explain`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) throw new Error(`Component suggestion failed (${res.status})`);
+    return await res.json();
+  }
+
+  /**
    * Query the educational AI assistant for explanation of subject and components.
    */
-  async getEducationalExplanation(query, { component = '', title = '', desc = '', subject = '' } = {}) {
+  async getEducationalExplanation(query, { component = '', title = '', desc = '', subject = '', status = 'verified', sourceName = '' } = {}) {
     const params = new URLSearchParams();
     const effectiveSubject = query || subject || title;
     params.set('query', effectiveSubject);
@@ -105,6 +118,8 @@ export class SketchfabProvider {
     if (title) params.set('title', title);
     if (desc) params.set('desc', desc);
     if (component) params.set('component', component);
+    if (status) params.set('status', status);
+    if (sourceName) params.set('sourceName', sourceName);
 
     const res = await fetch(`${this.baseUrl}/api/ai-explain?${params.toString()}`);
     if (!res.ok) throw new Error(`AI explanation failed (${res.status})`);
