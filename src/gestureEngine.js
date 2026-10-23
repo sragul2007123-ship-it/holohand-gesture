@@ -29,7 +29,7 @@ class HandState {
 const smooth = (prev, cur, dt) => {
   if (!prev) return { ...cur };
   const speed = Math.hypot(cur.x - prev.x, cur.y - prev.y) / dt;
-  const a = clamp(0.18 + speed * 0.6, 0.18, 0.85);
+  const a = clamp(0.40 + speed * 0.8, 0.40, 0.95);
   return { x: prev.x + (cur.x - prev.x) * a, y: prev.y + (cur.y - prev.y) * a };
 };
 
@@ -86,7 +86,7 @@ export class GestureEngine {
     const curl = ratios.map((r) => r < 1.32);
     const avg = (ratios[0] + ratios[1] + ratios[2] + ratios[3]) / 4;
     const rawOpen = clamp((avg - 1.05) / (1.8 - 1.05), 0, 1);
-    st.open += (rawOpen - st.open) * 0.45;
+    st.open += (rawOpen - st.open) * 0.72;
 
     // pinch with hysteresis
     const pr = d(4, 8) / size;
@@ -106,7 +106,7 @@ export class GestureEngine {
       st.cand = g;
       st.streak = 1;
     }
-    const need = g === 'PINCH' ? 2 : g === 'PEACE' ? 8 : 3;
+    const need = g === 'PINCH' ? 2 : g === 'PEACE' ? 5 : 2;
     if (st.streak >= need && st.stable !== st.cand) st.stable = st.cand;
 
     // viewport-space positions

@@ -208,6 +208,10 @@ export class HoloScene {
 
   _load(i) {
     const g = this._geometry(i);
+    this.isExternal = false;
+    this.externalEntry = null;
+    this.externalInfo = null;
+    this.isSingleMesh = false;
     if (this.points) this.group.remove(this.points);
     this.points = new THREE.Points(g.geo, this.material);
     this.points.frustumCulled = false;
@@ -228,6 +232,54 @@ export class HoloScene {
     this.vel.x = this.vel.y = 0;
     this.scatterTarget = 0;
     if (this.onModel) this.onModel(i, this.models[i], g);
+  }
+
+  /**
+   * Load an external 3D model entry (e.g. from Sketchfab GLTF loader).
+   * @param {Object} entry - Processed model entry containing geo, meta, fit, count, isSingleMesh
+   * @param {Object} info - Metadata info (name, subtitle, category, license, uid, etc.)
+   */
+  loadExternalEntry(entry, info) {
+    if (this.points) this.group.remove(this.points);
+    this.isExternal = true;
+    this.externalEntry = entry;
+    this.externalInfo = info;
+    this.isSingleMesh = Boolean(entry.isSingleMesh);
+
+    this.points = new THREE.Points(entry.geo, this.material);
+    this.points.frustumCulled = false;
+    this.group.add(this.points);
+
+    this.parts = entry.meta || [];
+    this.fit = entry.fit || FIT;
+    this.count = entry.count || 0;
+    this.index = -1;
+    this.pending = -1;
+    this.hover = -1;
+    this.sel = -1;
+    this.uniforms.uHi.value = -1;
+    this.uniforms.uSel.value = -1;
+    this.releaseAll(true);
+
+    this.rot.x = 0.25;
+    this.rot.y = 0.55;
+    this.rot.z = 0;
+    this.vel.x = this.vel.y = 0;
+    this.scaleTarget = 1;
+    this.scatterTarget = 0;
+    this.uniforms.uScatter.value = 0;
+
+    if (this.onModel) {
+      this.onModel(-1, {
+        name: info.name || 'Universal 3D Model',
+        subtitle: info.subtitle || (info.creator ? `By ${info.creator}` : 'Sketchfab Asset'),
+        category: info.category || 'Sketchfab 3D',
+        license: info.license || 'Public',
+        uid: info.uid || '',
+        isExternal: true,
+        isSingleMesh: this.isSingleMesh
+      }, entry);
+    }
   }
 
   setModel(i) {
@@ -265,7 +317,17 @@ export class HoloScene {
     this.scaleTarget = clamp(this.scaleTarget * f, 0.5, 2.6);
   }
   resetView() {
-    const v = this.models[this.index].view;
+    if (this.isExternal) {
+      this.rot.x = 0.25;
+      this.rot.y = 0.55;
+      this.rot.z = 0;
+      this.vel.x = this.vel.y = 0;
+      this.scaleTarget = 1;
+      this.releaseAll();
+      this.setSel(-1);
+      return;
+    }
+    const v = this.models[this.index]?.view || { x: 0, y: 0, z: 0 };
     this.rot.x = v.x;
     this.rot.y = v.y;
     this.rot.z = v.z;
@@ -338,8 +400,8 @@ export class HoloScene {
   // ------------------------------------------------------------------ frame
   update(dt, t) {
     this.idle += dt;
-    this.explode = damp(this.explode, this.explodeTarget, 5, dt);
-    this.scale = damp(this.scale, this.scaleTarget, 6, dt);
+    this.explode = damp(this.explode, this.explodeTarget, 11, dt);
+    this.scale = damp(this.scale, this.scaleTarget, 10, dt);
 
     // scatter transition between models
     this.uniforms.uScatter.value = damp(this.uniforms.uScatter.value, this.scatterTarget, this.scatterTarget ? 7 : 3.2, dt);

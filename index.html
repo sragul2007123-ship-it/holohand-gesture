@@ -18,8 +18,16 @@
     </div>
 
     <section class="model">
+      <div class="search-trigger" id="btn-open-explorer" title="Search universal 3D models (Shortcut: /)">
+        <span class="st-icon">🔍</span>
+        <span class="st-text">Search Universal 3D Models…</span>
+        <span class="st-kbd">/</span>
+      </div>
       <div class="tags"><span class="tag" id="m-cat">Machines</span><span class="tag ghost" id="m-count">0 parts</span></div>
-      <h2 id="m-name">Loading…</h2>
+      <div class="model-title-row">
+        <h2 id="m-name">Loading…</h2>
+        <button id="btn-model-ai" class="btn-ai-pill" title="Learn with AI Educational Assistant">🤖 Ask AI</button>
+      </div>
       <p id="m-sub"></p>
     </section>
 
@@ -86,6 +94,7 @@
     <section class="partcard" id="partcard">
       <div class="pc-name"><i id="pc-dot"></i><b id="pc-name">No part selected</b></div>
       <p id="pc-desc">Point at a part, or click one, to read what it does.</p>
+      <button id="pc-ai-btn" class="pc-ai-btn" style="display:none">🤖 Ask AI about this part</button>
     </section>
 
     <section class="btns">
@@ -97,6 +106,7 @@
   </aside>
 
   <div id="toolbar">
+    <button id="t-search" title="Universal 3D Explorer (Search Sketchfab)"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2" fill="none"/><path d="m20 20-4.35-4.35" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>
     <button id="t-mode" title="Switch input mode (Camera / Mouse)"><svg viewBox="0 0 24 24"><path d="M12 2a4 4 0 0 0-4 4v6a4 4 0 0 0 8 0V6a4 4 0 0 0-4-4zm0 18a7 7 0 0 1-7-7h2a5 5 0 0 0 10 0h2a7 7 0 0 1-7 7zm-1-14h2v5h-2z"/></svg></button>
     <button id="t-feed" class="on" title="Camera background"><svg viewBox="0 0 24 24"><path d="M3 7h3l2-2h8l2 2h3v12H3z"/><circle cx="12" cy="13" r="3.5"/></svg></button>
     <button id="t-skel" class="on" title="Hand skeleton"><svg viewBox="0 0 24 24"><path d="M7 21v-8M11 21V5M15 21V8M19 21v-7M7 13l-3-2"/></svg></button>
@@ -107,6 +117,138 @@
   <nav id="chips"></nav>
   <div id="toast"></div>
   <div id="banner"></div>
+
+  <!-- UNIVERSAL 3D EXPLORER MODAL -->
+  <div id="explorer-modal" class="modal-backdrop gone">
+    <div class="explorer-card">
+      <div class="explorer-header">
+        <div class="explorer-title-group">
+          <div class="logo small"></div>
+          <div>
+            <h3>Universal 3D Explorer</h3>
+            <span class="explorer-subtitle">Discover & explode real 3D models from science, tech, anatomy & history</span>
+          </div>
+        </div>
+        <div class="explorer-badge">Powered by Sketchfab API v3</div>
+        <button id="btn-close-explorer" class="modal-close-btn" title="Close Explorer (Esc)">✕</button>
+      </div>
+
+      <div class="explorer-search-bar">
+        <span class="search-icon">🔍</span>
+        <input type="text" id="explorer-input" placeholder="Search 3D models (e.g. human heart, dinosaur, robot arm, turbofan, electric motor)..." autocomplete="off" />
+        <button id="explorer-clear" class="btn-clear-search gone" title="Clear">✕</button>
+        <button id="explorer-btn" class="btn-search-submit">Search</button>
+      </div>
+
+      <div class="explorer-suggestions" id="explorer-suggestions">
+        <span class="sugg-label">Popular Topics:</span>
+        <button class="sugg-chip" data-q="human heart">Human Heart</button>
+        <button class="sugg-chip" data-q="human skull">Human Skull</button>
+        <button class="sugg-chip" data-q="dinosaur skeleton">Dinosaur</button>
+        <button class="sugg-chip" data-q="robot arm">Robot Arm</button>
+        <button class="sugg-chip" data-q="turbofan engine">Turbofan Engine</button>
+        <button class="sugg-chip" data-q="electric motor">Electric Motor</button>
+        <button class="sugg-chip" data-q="dna molecule">DNA Molecule</button>
+        <button class="sugg-chip" data-q="solar system">Solar System</button>
+        <button class="sugg-chip" data-q="hydraulic pump">Hydraulic Pump</button>
+        <button class="sugg-chip" data-q="smartphone">Smartphone</button>
+      </div>
+
+      <div class="explorer-nav-tabs">
+        <button class="tab-btn active" data-tab="all">All Models</button>
+        <button class="tab-btn" data-tab="downloadable">⚡ Downloadable (3D Hologram)</button>
+        <button class="tab-btn" data-tab="embed">👁️ Sketchfab Embed Only</button>
+        <button class="tab-btn" data-tab="favorites">⭐ Favorites (<span id="fav-count">0</span>)</button>
+        <button class="tab-btn" data-tab="recent">🕒 Recent</button>
+      </div>
+
+      <div class="explorer-body">
+        <div id="explorer-loading" class="explorer-state gone">
+          <div class="holo-spinner"></div>
+          <p id="explorer-loading-text">Querying Sketchfab 3D API...</p>
+          <small>Searching verified models across worldwide collections</small>
+        </div>
+
+        <div id="explorer-error" class="explorer-state gone">
+          <div class="error-icon">⚠️</div>
+          <h4 id="explorer-error-title">Search Error</h4>
+          <p id="explorer-error-desc">Could not connect to Sketchfab API.</p>
+          <button id="explorer-retry-btn" class="btn-pill">Retry Search</button>
+        </div>
+
+        <div id="explorer-empty" class="explorer-state gone">
+          <div class="empty-icon">🌐</div>
+          <h4>No 3D Models Found</h4>
+          <p>Try searching for broader keywords like <i>"heart"</i>, <i>"engine"</i>, <i>"skeleton"</i>, or <i>"satellite"</i>.</p>
+        </div>
+
+        <div id="explorer-grid" class="explorer-grid"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SKETCHFAB EMBED MODAL -->
+  <div id="embed-modal" class="modal-backdrop gone">
+    <div class="embed-card">
+      <div class="embed-header">
+        <div class="embed-title-info">
+          <h4 id="embed-model-title">Model Preview</h4>
+          <div class="embed-meta-line">
+            <span id="embed-creator"></span>
+            <span id="embed-license" class="badge-license"></span>
+          </div>
+        </div>
+        <div class="embed-actions">
+          <a id="embed-sketchfab-link" href="#" target="_blank" rel="noopener noreferrer" class="btn-pill ghost">View on Sketchfab ↗</a>
+          <button id="btn-close-embed" class="modal-close-btn" title="Close (Esc)">✕</button>
+        </div>
+      </div>
+      <div class="embed-iframe-container">
+        <iframe id="sketchfab-iframe" title="Sketchfab 3D Viewer" frameborder="0" allow="autoplay; fullscreen; xr-spatial-tracking" xr-spatial-tracking execution-while-out-of-viewport execution-while-not-rendered web-share allowfullscreen></iframe>
+      </div>
+      <div class="embed-footer">
+        <p class="embed-notice">ℹ️ This asset is rendered via the official Sketchfab 3D viewer. To control models with HoloHand gestures, select models marked with <b>⚡ Downloadable 3D</b>.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- AI EDUCATIONAL ASSISTANT MODAL -->
+  <div id="ai-modal" class="modal-backdrop gone">
+    <div class="ai-card">
+      <div class="ai-header">
+        <div class="ai-header-title">
+          <span class="ai-icon-chip">🤖 AI ASSISTANT</span>
+          <h3 id="ai-subject-title">Educational Exploration</h3>
+        </div>
+        <button id="btn-close-ai" class="modal-close-btn" title="Close (Esc)">✕</button>
+      </div>
+      <div class="ai-body" id="ai-body-content">
+        <div class="ai-loading">
+          <div class="holo-spinner"></div>
+          <p>Synthesizing educational knowledge & structural analysis…</p>
+        </div>
+      </div>
+      <div class="ai-footer">
+        <small>Distinguishes verified 3D metadata from generalized scientific principles. Never generates fictitious internal geometry.</small>
+      </div>
+    </div>
+  </div>
+
+  <!-- DOWNLOADING ASSET PROGRESS OVERLAY -->
+  <div id="asset-loader-overlay" class="asset-loader-overlay gone">
+    <div class="loader-box">
+      <div class="holo-spinner big"></div>
+      <h3 id="loader-title">Downloading 3D Model</h3>
+      <p id="loader-subtitle">Streaming GLTF asset from secure authorized endpoint…</p>
+      <div class="loader-progress-bar">
+        <div id="loader-progress-fill" class="progress-fill"></div>
+      </div>
+      <div class="loader-stat-line">
+        <span id="loader-percent">0%</span>
+        <span id="loader-detail">Sampling particle hologram…</span>
+      </div>
+    </div>
+  </div>
 
   <div id="start">
     <div class="card">

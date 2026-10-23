@@ -1,84 +1,150 @@
-# HoloHand (holohand-gesture)
-**Created by [Ragul S](https://github.com/sragul2007123-ship-it)**
+# HoloHand Universal 3D Explorer
+**Created by [Ragul S](https://github.com/sragu official repository: [holohand-gesture](https://github.com/sragul2007123-ship-it/holohand-gesture.git))**
 
-Control exploded 3D models with your bare hands. Your webcam is the background, a hand skeleton and a gold ring follow your hand,
-and each model is a glowing point cloud that pulls apart into labelled parts so you can see what is inside.
+HoloHand transforms 3D interaction into an embodied, holographic exploration experience. Control exploded 3D models with your bare hands or mouse. Discover real 3D assets across science, engineering, anatomy, nature, space, and history through the **Universal 3D Explorer** powered by the **Sketchfab Data API v3**, inspect individual components, explode internal assemblies, and learn with an AI Educational Assistant.
 
-Everything runs in the browser: MediaPipe Hand Landmarker + Three.js. No backend, no API keys, nothing is uploaded.
+---
 
-## Run
+## Key Features
 
-Needs Node.js 18+ and Chrome or Edge.
+1. **Universal 3D Discovery (Sketchfab API v3)**:
+   - Search across millions of real 3D models using natural language (e.g. *Human heart*, *Turbofan engine*, *Robot arm*, *Dinosaur skeleton*, *DNA molecule*).
+   - Real-time model cards with author attribution, thumbnails, face counts, and license information.
+   - Filter by **⚡ Downloadable 3D** (renders directly in the local Three.js holographic engine) or **👁️ Official Embed** (rendered via Sketchfab's official 3D viewer).
+   - Personal library with persistent Favorites (⭐) and Recently Viewed models (🕒).
+
+2. **HoloHand Particle Hologram Engine (Three.js)**:
+   - Dynamic GLTF/GLB models are sampled into holographic point-cloud particle meshes rendered with custom GLSL shaders.
+   - Models are automatically centered, bounding-box normalized, and framed to optimal camera distance.
+   - Radial explosion vectors calculate part offsets outward from the model's centroid.
+   - Supports **Case A/B** (multi-mesh assemblies with selectable parts and exploded views) and **Case C** (single-mesh models where explosion is cleanly disabled while rotation, zoom, and surface inspection remain active).
+
+3. **AI Educational Assistant**:
+   - Structured knowledge engine explaining what the object is, its primary purpose, operational mechanics, key components, and real-world applications.
+   - Interactive component breakdown and follow-up exploration suggestions with 1-click search.
+   - Verified metadata is distinguished from generalized scientific principles.
+
+4. **Natural Hand Gesture Control (MediaPipe + KNN Classifier)**:
+   - **Open hand**: Explode the model progressively; see inside.
+   - **Fist**: Pull the model back together.
+   - **Move / Twist**: Rotate and tilt the model in 3D space.
+   - **Point**: Highlight and inspect a component.
+   - **Pinch**: Drag a selected component in screen-space.
+   - **Two hands**: Zoom in or out by moving hands apart or together.
+   - **Peace sign**: Cycle to the next model or next search result.
+
+5. **Machine Learning Lab & Offline Evaluation**:
+   - **KNN Classifier (`k=5`)**: Scale-normalized 63D hand-landmark feature extraction.
+   - **ML Lab**: Record custom gesture samples and export/import datasets.
+   - **LOOCV Evaluation**: Offline Leave-One-Out Cross-Validation with confusion matrix and macro Precision/Recall/F1 metrics.
+
+---
+
+## Quick Start
+
+### 1. Requirements
+- Node.js 18+ (tested on Node v20/v24)
+- Modern web browser (Chrome, Edge, Firefox) with WebGL support
+
+### 2. Configuration & API Token Security
+The application securely isolates your Sketchfab API token in a backend server. **Your private token is NEVER exposed to browser bundles or public repositories.**
+
+1. Copy the example environment file:
+   ```bash
+   cp .env.example .env
+   ```
+2. Open `.env` and add your Sketchfab API token:
+   ```env
+   SKETCHFAB_API_TOKEN=your_sketchfab_api_token_here
+   PORT=3001
+   ```
+   *(Note: `.env` is listed in `.gitignore` and is strictly excluded from Git commits).*
+
+### 3. Running Locally
+Run both the secure backend proxy server and the Vite frontend:
 
 ```bash
-git clone https://github.com/sragul2007123-ship-it/holohand-gesture.git
-cd holohand-gesture
-npm install
+# Terminal 1: Start the secure API proxy server
+npm run server
+
+# Terminal 2: Start the Vite frontend dev server
 npm run dev
 ```
 
-Open the URL Vite prints (normally http://localhost:5173) and click **Start camera**. Camera only works on `http://localhost` or `https`.
-`npm install` copies the MediaPipe WASM and downloads the hand model into `public/`. If that download is blocked, the app fetches both from a CDN at runtime.
+Open your browser at `http://localhost:5173`.
+- Press `/` or click **Search Universal 3D Models…** to open the Universal 3D Explorer.
+- Click **Start camera** for hand gesture control, or click **Use mouse instead**.
 
-## Models
+---
 
-Turbofan Jet Engine (fan, guide vanes, compressors, combustor, turbines, shaft, nozzle) ·
-Radial Aircraft Engine (crankcase, 9 cylinders, pistons, rods, crankshaft, exhaust ring, supercharger) ·
-Sports Car (body panels, chassis, engine, drivetrain, seats, wheels, brakes) ·
-Human Brain (4 lobes, cerebellum, brainstem, corpus callosum, thalamus, hippocampus, amygdala, hypothalamus)
+## Gestures & Controls
 
-## Gestures
-
-| Gesture | Effect |
+| Gesture | Action |
 |---|---|
-| Open hand slowly | Explode the model. The white arc on the gold ring shows how far. |
-| Close your hand / fist | Pull it back together |
-| Move or twist your hand | Rotate and tilt the model |
-| Point (index finger) | Highlight the part under your fingertip. Hold still to lock it. |
-| Pinch while over a part | Grab it, drag it out, release to snap it back |
-| Two hands | Move them apart or together to zoom |
-| Peace sign (hold ~0.3 s) | Jump to the next model |
+| ✋ **Open hand slowly** | Explode multi-part assemblies (white arc indicates explosion percentage) |
+| ✊ **Close hand / Fist** | Assemble model back to its original state |
+| 👋 **Move or twist hand** | Rotate and tilt model in 3D |
+| ☝️ **Point index finger** | Highlight and select component under fingertip |
+| 🤏 **Pinch over part** | Pull part out, drag in 3D, release to snap back |
+| 🙌 **Two hands** | Adjust distance between hands to zoom |
+| ✌️ **Peace sign** | Cycle to next model / next search result |
 
-## Machine Learning Lab & Evaluation
+### Mouse & Keyboard Shortcuts
+- **Drag**: Rotate model · **Scroll**: Zoom in/out · **Click part**: Inspect details
+- **`/`**: Open Universal 3D Explorer
+- **`Space`**: Toggle explode / assemble
+- **`←` / `→`**: Previous / next built-in model
+- **`R`**: Reset view and part positions
+- **`Esc`**: Close any active modal
 
-HoloHand includes an in-browser Machine Learning Lab and offline evaluation pipeline:
-- **KNN Classifier (`k=5`)**: Scale-normalized 63-dimensional landmark feature extraction with Euclidean distance and streak debouncing.
-- **ML Lab**: Collect live hand-landmark samples, export datasets as JSON, and retrain the classifier dynamically in-browser.
-- **ML Evaluation (LOOCV)**: Built-in Leave-One-Out Cross-Validation evaluating folds with isolated models, confusion matrix visualization, accuracy, macro-averaged Precision, Recall, and F1 scores.
-- **Mode Persistence**: Remembers your preferred control mode (Camera or Mouse) in `localStorage` so refreshing the page resumes seamlessly without blocking dialogs. Switch modes anytime from the top-right toolbar or tracking badge.
+---
 
-## Testing
+## Automated Test Suites
 
-Run the automated ML evaluation and integrity test suite:
+Run both automated test suites:
 
 ```bash
+# 1. Run ML evaluation and classifier integrity tests
 npm test
+
+# 2. Run Universal 3D Explorer & Sketchfab API integration tests
+npm run test:explorer
 ```
 
-Tests cover input validation, confusion matrix orientation, zero-denominator edge cases, strict test-sample isolation during cross-validation, and dataset duplicate checks.
+The explorer test suite verifies:
+- Search query normalization and edge cases.
+- Token security and confidentiality (token is never leaked).
+- Live Sketchfab Search API responses with real model IDs, creators, and thumbnails.
+- Downloadable vs preview-only classification.
+- AI Educational Assistant structured knowledge generation.
+- Single-mesh (Case C) vs multi-mesh (Case A/B) geometry handling.
 
-## Mouse and keyboard
+---
 
-Drag = rotate · scroll = zoom · click a part = inspect it · `Space` = explode / assemble · `←` `→` or `1`–`4` = switch model · `R` = reset view.
-Sliders in the left panel control the explosion and its intensity. The top-right buttons toggle input mode, camera background, hand skeleton, labels, and fullscreen.
-
-## Tips
-
-- Even light and a plain background help. Keep your hand 40–80 cm from the camera, palm facing it.
-- Open and close your hand slowly. The peace sign needs a short hold so it does not trigger by accident.
-
-## Files
+## Project Structure
 
 ```
-src/main.js                 app loop, hand overlay, gesture -> action, labels, UI, ML integration
-src/knnClassifier.js        KNN gesture classifier & 63D landmark feature extraction
-src/mlEvaluation.js         cross-validation (LOOCV), confusion matrix & per-class metrics
-src/handTracking.js         MediaPipe wrapper (2 hands, local files then CDN, GPU then CPU)
-src/gestureEngine.js        landmarks -> gesture, openness, smoothed palm / fingertip / pinch, wrist roll
-src/scene.js                Three.js point-cloud renderer: explode, scatter transition, picking, part dragging
-src/models/                 shapes.js (point sampling) + jet / radial / car / brain definitions
-scripts/test-evaluation.mjs automated evaluation & integrity test suite
-public/                     gesture dataset JSON, models, and wasm runtime
+server/
+  index.js                  Secure Node.js HTTP proxy for Sketchfab API v3 & AI Explainer
+src/
+  main.js                   Main application loop, gestures, UI wiring, and modals
+  scene.js                  Three.js point-cloud renderer with dynamic model support
+  services/
+    modelSearch.js          Query normalization, categories, and localStorage library
+    modelLoader.js          GLTF/GLB loader, centering, adaptive sampling & part extraction
+  providers/
+    sketchfabProvider.js    Client API interface for search, metadata, and asset endpoints
+  models/                   Procedural built-in models (Turbofan, Radial, Car, Brain)
+  knnClassifier.js          KNN classifier and 63D landmark feature extraction
+  mlEvaluation.js           LOOCV cross-validation, confusion matrix & metrics
+scripts/
+  test-evaluation.mjs       ML evaluation test suite
+  test-universal-explorer.mjs Universal Explorer and Sketchfab integration test suite
 ```
 
-To add a model: write a `build()` returning parts (`P(name, description, color, [I(cloud, explodeDirection)])`) and register it in `src/models/index.js`.
+---
+
+## License & Attribution
+- Built with Three.js and Google MediaPipe.
+- 3D models retrieved via the Sketchfab Data API remain subject to their respective creators' creative commons and platform licenses. Attribution is automatically displayed on every model card and preview.
+

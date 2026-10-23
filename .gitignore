@@ -2,3 +2,6 @@ node_modules
 dist
 public/wasm
 public/models
+.env
+.env.local
+.env.*.local

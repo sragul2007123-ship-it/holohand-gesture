@@ -11,10 +11,12 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
+    "server": "node server/index.js",
     "dev": "vite --open",
     "build": "vite build",
     "preview": "vite preview",
     "test": "node scripts/test-evaluation.mjs",
+    "test:explorer": "node scripts/test-universal-explorer.mjs",
     "postinstall": "node scripts/setup.mjs"
   },
   "dependencies": {

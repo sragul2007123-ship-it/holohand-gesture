@@ -10,6 +10,9 @@ import {
 } from './knnClassifier.js';
 import { runLeaveOneOutCV } from './mlEvaluation.js';
 import { clamp } from './utils.js';
+import { sketchfabProvider } from './providers/sketchfabProvider.js';
+import { modelSearchService } from './services/modelSearch.js';
+import { modelLoaderService } from './services/modelLoader.js';
 
 const $ = (id) => document.getElementById(id);
 const video = $('video');
@@ -55,6 +58,16 @@ try {
 const ui = { skeleton: true, labels: true, feed: false };
 let trackingState = 'Off';
 
+let currentModelMeta = {
+  name: MODELS[0].name,
+  subtitle: MODELS[0].subtitle,
+  category: MODELS[0].category,
+  description: MODELS[0].subtitle,
+  uid: null,
+  isExternal: false,
+  isSingleMesh: false
+};
+
 // model chips grouped by category
 const chips = $('chips');
 for (const cat of [...new Set(MODELS.map((m) => m.category))]) {
@@ -79,8 +92,13 @@ scene.onModel = (i, def, g) => {
   $('m-name').textContent = def.name;
   $('m-sub').textContent = def.subtitle;
   $('m-cat').textContent = def.category;
-  $('m-count').textContent = `${g.meta.length} parts`;
+  if (def.isSingleMesh) {
+    $('m-count').textContent = '1 mesh (integrated)';
+  } else {
+    $('m-count').textContent = `${g.meta.length} parts`;
+  }
   chips.querySelectorAll('button').forEach((b) => b.classList.toggle('active', +b.dataset.i === i));
+  currentModelMeta = def;
   showPart(-1);
   toast(def.name);
 };
@@ -90,8 +108,19 @@ scene.onModel(scene.index, MODELS[scene.index], scene.cache.get(scene.index));
 function showPart(i) {
   const p = i >= 0 ? scene.parts[i] : null;
   $('pc-name').textContent = p ? p.name : 'No part selected';
-  $('pc-desc').textContent = p ? p.desc : 'Point at a part, or click one, to read what it does.';
+  $('pc-desc').textContent = p ? p.desc : (
+    scene.isSingleMesh
+      ? 'Single integrated mesh. Exploded view is disabled; use rotation and zoom to inspect surfaces.'
+      : 'Point at a part, or click one, to read what it does.'
+  );
   $('pc-dot').style.background = p ? p.color : '#555a70';
+  const pcAiBtn = $('pc-ai-btn');
+  if (pcAiBtn) {
+    pcAiBtn.style.display = p ? 'block' : 'none';
+    if (p) {
+      pcAiBtn.textContent = `🤖 Ask AI about "${p.name.slice(0, 18)}"`;
+    }
+  }
 }
 
 const rExplode = $('r-explode');
@@ -470,6 +499,457 @@ if (mlEvalRun) {
 
 updateMLCount();
 loadInitialDataset();
+
+// ------------------------------------------------------------------ Universal 3D Explorer & Knowledge Assistant
+let currentSearchResults = [];
+let currentSearchTab = 'all';
+let currentSearchQuery = '';
+
+function updateFavCount() {
+  const el = $('fav-count');
+  if (el) el.textContent = String(modelSearchService.getFavorites().length);
+}
+
+function openExplorer(initialQuery = '') {
+  const modal = $('explorer-modal');
+  if (!modal) return;
+  modal.classList.remove('gone');
+  updateFavCount();
+  if (initialQuery) {
+    if ($('explorer-input')) $('explorer-input').value = initialQuery;
+    executeSearch(initialQuery);
+  } else if (!currentSearchResults.length && !$('explorer-input')?.value.trim()) {
+    executeSearch('human heart');
+  }
+  setTimeout(() => $('explorer-input')?.focus(), 80);
+}
+
+function closeExplorer() {
+  const modal = $('explorer-modal');
+  if (modal) modal.classList.add('gone');
+}
+
+async function executeSearch(query) {
+  query = (query ?? $('explorer-input')?.value ?? '').trim();
+  if (!query) return;
+  if ($('explorer-input')) $('explorer-input').value = query;
+  $('explorer-clear')?.classList.toggle('gone', !query);
+  currentSearchQuery = query;
+
+  const loadingEl = $('explorer-loading');
+  const errorEl = $('explorer-error');
+  const emptyEl = $('explorer-empty');
+  const gridEl = $('explorer-grid');
+
+  loadingEl?.classList.remove('gone');
+  errorEl?.classList.add('gone');
+  emptyEl?.classList.add('gone');
+  if (gridEl) gridEl.innerHTML = '';
+
+  try {
+    const searchData = await modelSearchService.search(query, {
+      downloadable: currentSearchTab === 'downloadable' ? true : (currentSearchTab === 'embed' ? false : null)
+    });
+    const items = Array.isArray(searchData) ? searchData : (searchData?.results || []);
+    currentSearchResults = items;
+    loadingEl?.classList.add('gone');
+
+    if (!items || items.length === 0) {
+      emptyEl?.classList.remove('gone');
+      return;
+    }
+
+    renderExplorerCards(items);
+  } catch (err) {
+    console.error('[Search] Failed to execute search:', err);
+    loadingEl?.classList.add('gone');
+    errorEl?.classList.remove('gone');
+    if ($('explorer-error-desc')) {
+      $('explorer-error-desc').textContent = err.message || 'Could not connect to Sketchfab API.';
+    }
+  }
+}
+
+function renderExplorerCards(items) {
+  const gridEl = $('explorer-grid');
+  if (!gridEl) return;
+  gridEl.innerHTML = '';
+  const list = Array.isArray(items) ? items : (items?.results || []);
+  const favUids = new Set(modelSearchService.getFavorites().map((f) => f.id || f.uid));
+
+  let filtered = list;
+  if (currentSearchTab === 'downloadable') {
+    filtered = list.filter((m) => m.isDownloadable);
+  } else if (currentSearchTab === 'embed') {
+    filtered = list.filter((m) => !m.isDownloadable);
+  }
+
+  if (!filtered || filtered.length === 0) {
+    $('explorer-empty')?.classList.remove('gone');
+    return;
+  }
+  $('explorer-empty')?.classList.add('gone');
+
+  filtered.forEach((model) => {
+    const card = document.createElement('div');
+    card.className = 'model-card';
+
+    const uid = model.id || model.uid;
+    const thumbUrl = model.thumbnailUrl || model.thumbnail || 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="300" height="200"><rect width="300" height="200" fill="%23111424"/><text x="50%" y="50%" fill="%23666" text-anchor="middle">3D Asset</text></svg>';
+    const isFav = favUids.has(uid);
+    const badgeHtml = model.isDownloadable
+      ? `<span class="badge-type badge-downloadable">⚡ Downloadable 3D</span>`
+      : `<span class="badge-type badge-embed">👁️ Embed View</span>`;
+
+    const faces = model.stats?.faces || model.faceCount || 0;
+    const faceText = faces > 0 ? (faces > 1000 ? Math.round(faces / 1000) + 'k' : faces) + ' faces' : '';
+
+    card.innerHTML = `
+      <div class="card-thumb-wrap">
+        <img class="card-thumb" src="${escapeHtml(thumbUrl)}" alt="${escapeHtml(model.title)}" loading="lazy" />
+        ${badgeHtml}
+        <button class="card-fav-btn ${isFav ? 'active' : ''}" title="${isFav ? 'Remove from favorites' : 'Add to favorites'}">⭐</button>
+      </div>
+      <div class="card-body">
+        <div class="card-title" title="${escapeHtml(model.title)}">${escapeHtml(model.title)}</div>
+        <div class="card-creator">By <b>${escapeHtml(model.creator?.name || 'Unknown')}</b></div>
+        <div class="card-meta-line">
+          <span class="badge-license">${escapeHtml(model.license?.label || 'Sketchfab CC')}</span>
+          <span>${faceText}</span>
+        </div>
+        <div class="card-actions">
+          ${model.isDownloadable ? `
+            <button class="btn-pill primary btn-load-hologram" title="Download & explode in HoloHand 3D viewer">⚡ Load Hologram</button>
+          ` : `
+            <button class="btn-pill ghost btn-view-embed" title="Preview in official Sketchfab viewer">👁️ View Embed</button>
+          `}
+          <button class="btn-pill ai btn-card-ai" title="Ask AI about this model">🤖 AI</button>
+        </div>
+      </div>
+    `;
+
+    const favBtn = card.querySelector('.card-fav-btn');
+    if (favBtn) {
+      favBtn.onclick = (e) => {
+        e.stopPropagation();
+        const updated = modelSearchService.toggleFavorite(model);
+        const nowFav = updated;
+        favBtn.classList.toggle('active', nowFav);
+        updateFavCount();
+        toast(nowFav ? 'Added to favorites' : 'Removed from favorites');
+        if (currentSearchTab === 'favorites') {
+          renderExplorerCards(modelSearchService.getFavorites());
+        }
+      };
+    }
+
+    const loadBtn = card.querySelector('.btn-load-hologram');
+    if (loadBtn) {
+      loadBtn.onclick = () => loadModelIntoHologram(model);
+    }
+
+    const embedBtn = card.querySelector('.btn-view-embed');
+    if (embedBtn) {
+      embedBtn.onclick = () => openEmbedModal(model);
+    }
+
+    const aiBtn = card.querySelector('.btn-card-ai');
+    if (aiBtn) {
+      aiBtn.onclick = () => openAiModal(model.title, {
+        description: model.description,
+        creator: model.creator?.name,
+        tags: model.tags,
+        categories: model.categories
+      });
+    }
+
+    gridEl.appendChild(card);
+  });
+}
+
+async function loadModelIntoHologram(model) {
+  closeExplorer();
+  const overlay = $('asset-loader-overlay');
+  const titleEl = $('loader-title');
+  const subEl = $('loader-subtitle');
+  const fillEl = $('loader-progress-fill');
+  const pctEl = $('loader-percent');
+  const detEl = $('loader-detail');
+
+  overlay?.classList.remove('gone');
+  if (titleEl) titleEl.textContent = `Downloading ${model.title}`;
+  if (subEl) subEl.textContent = 'Requesting authorized download stream from Sketchfab API…';
+  if (fillEl) fillEl.style.width = '10%';
+  if (pctEl) pctEl.textContent = '10%';
+  if (detEl) detEl.textContent = 'Authenticating…';
+
+  try {
+    const uid = model.id || model.uid;
+    const assetUrl = await sketchfabProvider.getModelAssetUrl(uid);
+    if (fillEl) fillEl.style.width = '30%';
+    if (pctEl) pctEl.textContent = '30%';
+    if (detEl) detEl.textContent = 'Streaming GLTF mesh data…';
+
+    const entry = await modelLoaderService.loadGLB(assetUrl, (pct, loaded, total) => {
+      const p = Math.max(30, Math.min(85, Math.round(30 + pct * 0.55)));
+      if (fillEl) fillEl.style.width = `${p}%`;
+      if (pctEl) pctEl.textContent = `${p}%`;
+      const mb = (loaded / (1024 * 1024)).toFixed(1);
+      const totalMb = total > 0 ? (total / (1024 * 1024)).toFixed(1) + ' MB' : '';
+      if (detEl) detEl.textContent = `Downloaded ${mb} MB ${totalMb}`;
+    });
+
+    if (detEl) detEl.textContent = 'Sampling particle hologram geometry…';
+    if (fillEl) fillEl.style.width = '95%';
+    if (pctEl) pctEl.textContent = '95%';
+
+    scene.loadExternalEntry(entry, {
+      name: model.title,
+      subtitle: `By ${model.creator?.name || 'Sketchfab Creator'}`,
+      creator: model.creator?.name,
+      category: 'Sketchfab 3D',
+      license: model.license?.label || 'Public CC',
+      uid: uid
+    });
+
+    modelSearchService.recordViewedModel(model);
+
+    if (fillEl) fillEl.style.width = '100%';
+    if (pctEl) pctEl.textContent = '100%';
+    setTimeout(() => {
+      overlay?.classList.add('gone');
+      toast(`Loaded: ${model.title}`);
+      if (entry.isSingleMesh) {
+        showBanner('Single-mesh model: Exploded view disabled. Surface inspection, rotation and zoom are active.', true);
+      } else {
+        showBanner('');
+      }
+    }, 300);
+  } catch (err) {
+    console.error('[Loader] Failed to load model:', err);
+    overlay?.classList.add('gone');
+    showBanner(`Failed to load 3D model: ${err.message}`);
+    toast('Loading failed');
+  }
+}
+
+function openEmbedModal(model) {
+  const modal = $('embed-modal');
+  const iframe = $('sketchfab-iframe');
+  const uid = model.id || model.uid;
+  if ($('embed-model-title')) $('embed-model-title').textContent = model.title;
+  if ($('embed-creator')) $('embed-creator').textContent = `Creator: ${model.creator?.name || 'Sketchfab Author'}`;
+  if ($('embed-license')) $('embed-license').textContent = model.license?.label || 'Sketchfab View';
+  if ($('embed-sketchfab-link')) $('embed-sketchfab-link').href = `https://sketchfab.com/3d-models/${uid}`;
+  if (iframe) iframe.src = `https://sketchfab.com/models/${uid}/embed?autostart=1&camera=0&preload=1&ui_controls=1&ui_infos=0&ui_watermark=0`;
+  modal?.classList.remove('gone');
+}
+
+function closeEmbedModal() {
+  const modal = $('embed-modal');
+  const iframe = $('sketchfab-iframe');
+  modal?.classList.add('gone');
+  if (iframe) iframe.src = 'about:blank';
+}
+
+async function openAiModal(subjectTitle, context = {}) {
+  const modal = $('ai-modal');
+  modal?.classList.remove('gone');
+  if ($('ai-subject-title')) $('ai-subject-title').textContent = subjectTitle;
+  const contentEl = $('ai-body-content');
+  if (contentEl) {
+    contentEl.innerHTML = `
+      <div class="ai-loading">
+        <div class="holo-spinner"></div>
+        <p style="margin-top:12px;">Synthesizing educational knowledge for <b>${escapeHtml(subjectTitle)}</b>…</p>
+        <small style="color:var(--muted);margin-top:4px;display:block;">Analyzing structural mechanics, functions, and real-world applications</small>
+      </div>
+    `;
+  }
+
+  try {
+    const aiData = await sketchfabProvider.getAIExplanation(subjectTitle, context);
+    renderAiExplanation(aiData, subjectTitle);
+  } catch (err) {
+    if (contentEl) {
+      contentEl.innerHTML = `
+        <div class="ai-section">
+          <h4>Analysis Unavailable</h4>
+          <p>${escapeHtml(err.message || 'Could not retrieve AI analysis.')}</p>
+        </div>
+      `;
+    }
+  }
+}
+
+function renderAiExplanation(data, title) {
+  const contentEl = $('ai-body-content');
+  if (!contentEl) return;
+  const components = Array.isArray(data.components) ? data.components : [];
+  const followUps = Array.isArray(data.followUpExplorations) ? data.followUpExplorations : [];
+
+  contentEl.innerHTML = `
+    <div class="ai-section">
+      <h4>🔍 What is this & Purpose</h4>
+      <p>${escapeHtml(data.overview || 'Exploration overview.')}</p>
+      ${data.purpose ? `<p style="margin-top:6px;"><b>Primary Purpose:</b> ${escapeHtml(data.purpose)}</p>` : ''}
+    </div>
+
+    <div class="ai-section">
+      <h4>⚙️ How It Works & Core Principles</h4>
+      <p>${escapeHtml(data.howItWorks || 'Operational mechanics.')}</p>
+    </div>
+
+    ${components.length ? `
+      <div class="ai-section">
+        <h4>🧩 Key Components & Structure</h4>
+        <div class="ai-components-list">
+          ${components.map((c) => `
+            <div class="ai-component-card">
+              <b>${escapeHtml(c.name)}</b>
+              <span>${escapeHtml(c.role || c.description || '')}</span>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    ` : ''}
+
+    ${data.practicalApplications ? `
+      <div class="ai-section">
+        <h4>🚀 Real-World Applications</h4>
+        <p>${escapeHtml(data.practicalApplications)}</p>
+      </div>
+    ` : ''}
+
+    ${followUps.length ? `
+      <div class="ai-section">
+        <h4>🔭 Recommended Next Explorations</h4>
+        <div class="ai-followup-tags">
+          ${followUps.map((term) => `
+            <button class="ai-followup-btn" data-query="${escapeHtml(term)}">🔎 ${escapeHtml(term)}</button>
+          `).join('')}
+        </div>
+      </div>
+    ` : ''}
+  `;
+
+  contentEl.querySelectorAll('.ai-followup-btn').forEach((btn) => {
+    btn.onclick = () => {
+      $('ai-modal')?.classList.add('gone');
+      openExplorer(btn.dataset.query);
+    };
+  });
+}
+
+// Wire explorer listeners
+const btnOpenExplorer = $('btn-open-explorer');
+if (btnOpenExplorer) btnOpenExplorer.onclick = () => openExplorer();
+
+const tSearch = $('t-search');
+if (tSearch) tSearch.onclick = () => openExplorer();
+
+const btnCloseExplorer = $('btn-close-explorer');
+if (btnCloseExplorer) btnCloseExplorer.onclick = closeExplorer;
+
+const explorerBtn = $('explorer-btn');
+if (explorerBtn) explorerBtn.onclick = () => executeSearch();
+
+const explorerInput = $('explorer-input');
+if (explorerInput) {
+  explorerInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') executeSearch();
+  });
+  explorerInput.addEventListener('input', () => {
+    $('explorer-clear')?.classList.toggle('gone', !explorerInput.value);
+  });
+}
+
+const explorerClear = $('explorer-clear');
+if (explorerClear) {
+  explorerClear.onclick = () => {
+    if (explorerInput) {
+      explorerInput.value = '';
+      explorerClear.classList.add('gone');
+      explorerInput.focus();
+    }
+  };
+}
+
+document.querySelectorAll('.sugg-chip').forEach((btn) => {
+  btn.onclick = () => {
+    const q = btn.dataset.q;
+    if (explorerInput) explorerInput.value = q;
+    executeSearch(q);
+  };
+});
+
+document.querySelectorAll('.tab-btn').forEach((btn) => {
+  btn.onclick = () => {
+    document.querySelectorAll('.tab-btn').forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentSearchTab = btn.dataset.tab;
+    if (currentSearchTab === 'favorites') {
+      renderExplorerCards(modelSearchService.getFavorites());
+    } else if (currentSearchTab === 'recent') {
+      renderExplorerCards(modelSearchService.getRecentModels());
+    } else {
+      renderExplorerCards(currentSearchResults);
+    }
+  };
+});
+
+const explorerRetryBtn = $('explorer-retry-btn');
+if (explorerRetryBtn) explorerRetryBtn.onclick = () => executeSearch(currentSearchQuery);
+
+const btnCloseEmbed = $('btn-close-embed');
+if (btnCloseEmbed) btnCloseEmbed.onclick = closeEmbedModal;
+
+const btnCloseAi = $('btn-close-ai');
+if (btnCloseAi) btnCloseAi.onclick = () => $('ai-modal')?.classList.add('gone');
+
+const btnModelAi = $('btn-model-ai');
+if (btnModelAi) {
+  btnModelAi.onclick = () => openAiModal(currentModelMeta.name, {
+    description: currentModelMeta.subtitle,
+    category: currentModelMeta.category
+  });
+}
+
+const pcAiBtn = $('pc-ai-btn');
+if (pcAiBtn) {
+  pcAiBtn.onclick = () => {
+    const p = scene.parts[scene.sel >= 0 ? scene.sel : scene.hover];
+    if (p) {
+      openAiModal(`${p.name} · ${currentModelMeta.name}`, {
+        description: p.desc,
+        componentName: p.name,
+        parentModel: currentModelMeta.name
+      });
+    }
+  };
+}
+
+// Click backdrop to close
+const explorerModal = $('explorer-modal');
+if (explorerModal) {
+  explorerModal.addEventListener('pointerdown', (e) => {
+    if (e.target === explorerModal) closeExplorer();
+  });
+}
+
+const embedModal = $('embed-modal');
+if (embedModal) {
+  embedModal.addEventListener('pointerdown', (e) => {
+    if (e.target === embedModal) closeEmbedModal();
+  });
+}
+
+const aiModal = $('ai-modal');
+if (aiModal) {
+  aiModal.addEventListener('pointerdown', (e) => {
+    if (e.target === aiModal) aiModal.classList.add('gone');
+  });
+}
 let camOn = false;
 let lastVideoTime = -1;
 let perc = { hands: [] };
@@ -493,42 +973,106 @@ function stopCamera() {
 async function startCamera(isAutoResume = false) {
   localStorage.setItem(STORAGE_KEY_MODE, 'camera');
   $('start').classList.add('gone');
-  setTracking('Starting…', 'warn');
+  setTracking('Requesting camera…', 'warn');
+  showBanner('');
+
   if (!navigator.mediaDevices?.getUserMedia || !window.isSecureContext) {
-    enterMouseMode('Camera needs http://localhost or https.', false);
+    showBanner('Camera requires localhost or HTTPS. Open HoloHand at http://localhost:5174 or a secure HTTPS address.');
+    setTracking('Camera unavailable', 'warn');
+    openStartModal();
     return;
   }
+
+  let stream;
+
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
-      audio: false
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: {
+        facingMode: 'user',
+        width: { ideal: 1280 },
+        height: { ideal: 720 }
+      }
     });
+
     video.srcObject = stream;
+    video.muted = true;
+    video.playsInline = true;
+
+    await new Promise((resolve, reject) => {
+      if (video.readyState >= 2 && video.videoWidth > 0) {
+        resolve();
+        return;
+      }
+
+      const cleanup = () => {
+        video.removeEventListener('loadeddata', onReady);
+        video.removeEventListener('error', onError);
+      };
+
+      const onReady = () => {
+        cleanup();
+        resolve();
+      };
+
+      const onError = () => {
+        cleanup();
+        reject(new Error('The webcam video stream could not be decoded.'));
+      };
+
+      video.addEventListener('loadeddata', onReady, { once: true });
+      video.addEventListener('error', onError, { once: true });
+    });
+
     await video.play();
+
     camOn = true;
     ui.feed = true;
     $('t-feed')?.classList.add('on');
     document.body.classList.add('feed');
+
+    console.info('[Camera] Stream active:', {
+      width: video.videoWidth,
+      height: video.videoHeight
+    });
   } catch (e) {
-    console.warn(e);
-    enterMouseMode(
-      e && e.name === 'NotAllowedError'
-        ? 'Camera permission denied. Allow it in the address bar and reload.'
-        : 'No camera found.',
-      false
-    );
+    stream?.getTracks().forEach(track => track.stop());
+
+    video.srcObject = null;
+    camOn = false;
+    document.body.classList.remove('feed');
+
+    console.error('[Camera] Initialization failed:', e);
+
+    const messages = {
+      NotAllowedError: 'Camera permission denied. Allow camera access in your browser settings.',
+      NotFoundError: 'No webcam was found. Connect or enable a camera.',
+      NotReadableError: 'The camera may be in use by another app. Close other camera apps and retry.',
+      OverconstrainedError: 'The requested camera settings are unsupported.',
+      AbortError: 'Camera startup was interrupted. Try again.',
+      SecurityError: 'Camera access was blocked by browser security.'
+    };
+
+    showBanner(messages[e?.name] || `Camera error: ${e?.message || 'Unknown error'}`);
+    setTracking('Camera error', 'warn');
+    openStartModal();
     return;
   }
+
   setTracking('Loading hand model…', 'warn');
+
   try {
     await tracker.init();
     setTracking('Hands on', 'ok');
     showBanner('');
+
     if (!isAutoResume) toast('Hand tracking active');
+
+    console.info('[Camera] Hand tracker initialized:', tracker.info);
   } catch (e) {
-    console.error(e);
-    setTracking('Mouse only', 'warn');
-    showBanner('Hand model failed to load (needs internet once). Mouse controls still work.');
+    console.error('[MediaPipe] Initialization failed:', e);
+    setTracking('Camera on · Tracking unavailable', 'warn');
+    showBanner('Camera works, but hand tracking failed to initialize. Check the MediaPipe model and WASM network requests.');
   }
 }
 
@@ -685,14 +1229,18 @@ function control(t, dt) {
 
   if (g === 'OPEN' || g === 'FIST' || g === 'NONE') {
     // openness drives the explosion
-    scene.explodeTarget = g === 'FIST' ? 0 : clamp((h.openness - 0.12) / 0.78, 0, 1);
+    if (scene.isSingleMesh) {
+      scene.explodeTarget = 0;
+    } else {
+      scene.explodeTarget = g === 'FIST' ? 0 : clamp((h.openness - 0.12) / 0.78, 0, 1);
+    }
     // moving the hand rotates the model
     const prev = prevPalm.get(h.id);
     if (prev) {
       const dx = palmPx.x - prev.x, dy = palmPx.y - prev.y;
-      if (Math.hypot(dx, dy) > 1.5) scene.rotateBy(dx * 0.0048, dy * 0.0032, dt);
+      if (Math.hypot(dx, dy) > 1.2) scene.rotateBy(dx * 0.0075, dy * 0.0050, dt);
     }
-    if (h.rollDelta) scene.rollBy(h.rollDelta * 0.7);
+    if (h.rollDelta) scene.rollBy(h.rollDelta * 1.1);
     scene.setHover(-1);
     setActive(g === 'NONE' ? 'MOVE' : g);
     if (g === 'OPEN' && prev && Math.hypot(palmPx.x - prev.x, palmPx.y - prev.y) > 6) setActive('MOVE');
@@ -726,7 +1274,18 @@ function control(t, dt) {
     } else if (g === 'PEACE') {
       if (t > peaceCool) {
         peaceCool = t + 1.6;
-        scene.next();
+        if (scene.isExternal && currentSearchResults.length > 1) {
+          const down = currentSearchResults.filter((m) => m.isDownloadable);
+          if (down.length > 1) {
+            const curIdx = down.findIndex((m) => m.uid === currentModelMeta?.uid);
+            const nextIdx = (curIdx + 1) % down.length;
+            loadModelIntoHologram(down[nextIdx]);
+          } else {
+            scene.next();
+          }
+        } else {
+          scene.next();
+        }
       }
     }
     setActive(g);
@@ -739,7 +1298,7 @@ function control(t, dt) {
 let draggingMouse = false;
 let mouseStart = null;
 let mouseLast = null;
-const onUi = (e) => e.target.closest && e.target.closest('#panel,#chips,#toolbar,#start');
+const onUi = (e) => e.target.closest && e.target.closest('#panel,#chips,#toolbar,#start,#explorer-modal,#embed-modal,#ai-modal,#asset-loader-overlay');
 
 addEventListener('pointerdown', (e) => {
   if (e.button !== 0 || onUi(e)) return;
@@ -767,10 +1326,28 @@ addEventListener('wheel', (e) => {
   scene.zoomBy(Math.exp(-e.deltaY * 0.0012));
 }, { passive: true });
 addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    closeExplorer();
+    closeEmbedModal();
+    $('ai-modal')?.classList.add('gone');
+    if (startModal && !startModal.classList.contains('gone')) {
+      closeStartModal();
+    }
+    return;
+  }
   if (e.target.tagName === 'INPUT' && e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+  if (e.key === '/') {
+    e.preventDefault();
+    openExplorer();
+    return;
+  }
   if (e.key === ' ') {
     e.preventDefault();
-    scene.explodeTarget = scene.explodeTarget > 0.5 ? 0 : 1;
+    if (scene.isSingleMesh) {
+      toast('Single-mesh model: Exploded view disabled');
+    } else {
+      scene.explodeTarget = scene.explodeTarget > 0.5 ? 0 : 1;
+    }
   } else if (e.key === 'ArrowRight') scene.next(1);
   else if (e.key === 'ArrowLeft') scene.next(-1);
   else if (e.key.toLowerCase() === 'r') scene.resetView();
@@ -977,7 +1554,7 @@ function frame(now) {
       mlPredictionStates.set(hand.id, state);
 
       // Require repeated predictions before switching gestures.
-      if (state.streak >= 3) {
+      if (state.streak >= 2) {
         hand.gesture = prediction.label;
       }
     }
