@@ -3,6 +3,12 @@ import { HoloScene } from './scene.js';
 import { MODELS } from './models/index.js';
 import { HandTracker } from './handTracking.js';
 import { GestureEngine, HAND_CONNECTIONS } from './gestureEngine.js';
+import {
+  extractFeatures,
+  GESTURES,
+  KNNClassifier
+} from './knnClassifier.js';
+import { runLeaveOneOutCV } from './mlEvaluation.js';
 import { clamp } from './utils.js';
 
 const $ = (id) => document.getElementById(id);
@@ -125,28 +131,392 @@ $('t-full').onclick = () => (document.fullscreenElement ? document.exitFullscree
 // ------------------------------------------------------------------ camera + tracking
 const tracker = new HandTracker();
 const engine = new GestureEngine();
+
+let latestHands = [];
+let mlSamples = [];
+const knn = new KNNClassifier(5);
+
+const mlPredictionStates = new Map();
+let datasetLoaded = false;
+let datasetLoading = false;
+
+const mlGesture = $('ml-gesture');
+const mlCapture = $('ml-capture');
+const mlExport = $('ml-export');
+const mlClear = $('ml-clear');
+
+function updateMLCount() {
+  $('ml-count').textContent =
+    `Total samples: ${mlSamples.length} | ` +
+    GESTURES.map(g =>
+      `${g}: ${mlSamples.filter(s => s.label === g).length}`
+    ).join(' | ');
+}
+
+mlCapture.onclick = () => {
+  if (!camOn || !tracker.ready) {
+    $('ml-status').textContent = 'Start the camera and wait for hand tracking.';
+    return;
+  }
+
+  if (!latestHands.length) {
+    $('ml-status').textContent = 'No hand detected. Place one hand in view.';
+    return;
+  }
+
+  const features = extractFeatures(latestHands[0].landmarks);
+
+  if (!features) {
+    $('ml-status').textContent = 'Could not extract hand features. Try again.';
+    return;
+  }
+
+  mlSamples.push({
+    features,
+    label: mlGesture.value,
+    capturedAt: new Date().toISOString()
+  });
+  knn.addSample(features, mlGesture.value);
+
+  updateMLCount();
+  $('ml-status').textContent =
+    `Captured ${mlGesture.value} sample successfully.`;
+};
+
+mlExport.onclick = () => {
+  if (!mlSamples.length) {
+    $('ml-status').textContent = 'Capture samples before exporting.';
+    return;
+  }
+
+  const blob = new Blob(
+    [JSON.stringify({
+      format: 'holohand-knn-v1',
+      featureCount: 63,
+      samples: mlSamples
+    }, null, 2)],
+    { type: 'application/json' }
+  );
+
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = 'holohand-gesture-dataset.json';
+  link.click();
+  URL.revokeObjectURL(url);
+
+  $('ml-status').textContent = 'Dataset export requested.';
+};
+
+mlClear.onclick = () => {
+  if (!confirm('Clear all collected ML samples?')) return;
+
+  mlSamples = [];
+  knn.clear();
+  mlPredictionStates.clear();
+  datasetLoaded = false;
+  updateMLCount();
+  $('ml-status').textContent = 'Dataset cleared. 0 samples in classifier.';
+  if (mlEvalOutput) {
+    mlEvalOutput.innerHTML = `
+      <div class="eval-state eval-empty">
+        <p>Dataset cleared. No evaluation available.</p>
+        <small>Capture or load training samples to evaluate.</small>
+      </div>
+    `;
+  }
+};
+
+async function loadInitialDataset() {
+  if (datasetLoading || datasetLoaded) return;
+  datasetLoading = true;
+  $('ml-status').textContent = 'Loading training dataset…';
+
+  try {
+    const res = await fetch('/holohand-gesture-dataset.json');
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status} ${res.statusText}`);
+    }
+    const data = await res.json();
+    if (!data || typeof data !== 'object') {
+      throw new Error('Dataset is not a valid JSON object.');
+    }
+    if (data.format !== 'holohand-knn-v1') {
+      throw new Error(`Unsupported dataset format: ${data.format}`);
+    }
+    if (data.featureCount !== 63) {
+      throw new Error(`Unexpected featureCount: ${data.featureCount} (expected 63)`);
+    }
+    if (!Array.isArray(data.samples) || data.samples.length === 0) {
+      throw new Error('Dataset contains no samples array.');
+    }
+
+    let validCount = 0;
+    const classCounts = Object.fromEntries(GESTURES.map((g) => [g, 0]));
+
+    for (const s of data.samples) {
+      if (
+        !s ||
+        !Array.isArray(s.features) ||
+        s.features.length !== 63 ||
+        !GESTURES.includes(s.label) ||
+        !s.features.every(Number.isFinite)
+      ) {
+        console.warn('[KNN] Skipping invalid sample:', s);
+        continue;
+      }
+
+      const added = knn.addSample(s.features, s.label);
+      if (added) {
+        mlSamples.push({
+          features: [...s.features],
+          label: s.label,
+          capturedAt: s.capturedAt || new Date().toISOString()
+        });
+        classCounts[s.label]++;
+        validCount++;
+      }
+    }
+
+    if (validCount === 0) {
+      throw new Error('No valid samples could be loaded from dataset.');
+    }
+
+    datasetLoaded = true;
+    updateMLCount();
+
+    console.log('[KNN] Dataset loaded successfully');
+    console.log(`[KNN] Samples loaded: ${validCount}`);
+    for (const g of GESTURES) {
+      console.log(`[KNN] ${g}: ${classCounts[g] || 0}`);
+    }
+    console.log('[KNN] ML ready');
+
+    $('ml-status').textContent = `Dataset loaded. ML ready (${validCount} samples).`;
+    runEvaluation();
+  } catch (err) {
+    console.error('[KNN] Error loading dataset:', err);
+    $('ml-status').textContent = `Dataset load error: ${err.message}. Manual collection available.`;
+  } finally {
+    datasetLoading = false;
+  }
+}
+
+// ------------------------------------------------------------------ ML Evaluation Dashboard
+const mlEvalRun = $('ml-eval-run');
+const mlEvalOutput = $('ml-eval-output');
+
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function renderEvaluationResults(res) {
+  const pct = (num) => (num * 100).toFixed(1) + '%';
+  const evalDate = new Date(res.evaluatedAt).toLocaleString(undefined, {
+    dateStyle: 'short',
+    timeStyle: 'medium'
+  });
+
+  // Confusion matrix HTML table
+  const matrixHtml = `
+    <div class="eval-table-title">Confusion Matrix (Rows: Actual, Cols: Pred)</div>
+    <div class="eval-table-wrap">
+      <table class="eval-table">
+        <thead>
+          <tr>
+            <th class="th-left" title="Actual gesture">Act \\ Pred</th>
+            ${res.labels.map((l) => `<th title="Predicted ${l}">${l.slice(0, 3)}</th>`).join('')}
+          </tr>
+        </thead>
+        <tbody>
+          ${res.labels.map((actualLabel, r) => `
+            <tr>
+              <td class="td-left" style="font-weight:600">${actualLabel}</td>
+              ${res.matrix[r].map((count, c) => {
+                const isDiag = r === c;
+                const cellClass = isDiag
+                  ? (count > 0 ? 'matrix-diag' : 'matrix-zero')
+                  : (count > 0 ? 'matrix-err' : 'matrix-zero');
+                const titleText = `Actual: ${actualLabel}, Predicted: ${res.labels[c]} (${count})`;
+                return `<td class="matrix-cell ${cellClass}" title="${titleText}">${count}</td>`;
+              }).join('')}
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+
+  // Per-Class Metrics Table
+  const metricsTableHtml = `
+    <div class="eval-table-title">Per-Gesture Performance</div>
+    <div class="eval-table-wrap">
+      <table class="eval-table">
+        <thead>
+          <tr>
+            <th class="th-left">Gesture</th>
+            <th title="Precision = TP / (TP + FP)">Prec</th>
+            <th title="Recall = TP / (TP + FN)">Rec</th>
+            <th title="F1-Score">F1</th>
+            <th title="Support (Sample count)">N</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${res.metrics.map((m) => `
+            <tr>
+              <td class="td-left">${m.label}</td>
+              <td>${pct(m.precision)}</td>
+              <td>${pct(m.recall)}</td>
+              <td>${pct(m.f1)}</td>
+              <td>${m.support}</td>
+            </tr>
+          `).join('')}
+          <tr class="total-row">
+            <td class="td-left">Macro Avg</td>
+            <td>${pct(res.macroPrecision)}</td>
+            <td>${pct(res.macroRecall)}</td>
+            <td>${pct(res.macroF1)}</td>
+            <td>${res.total}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  `;
+
+  mlEvalOutput.innerHTML = `
+    <div class="eval-meta">
+      <div><b>Method:</b> ${escapeHtml(res.method)} (k=${res.k})</div>
+      <div><b>Dataset:</b> ${res.total} samples · <b>Time:</b> ${escapeHtml(evalDate)}</div>
+    </div>
+
+    <div class="eval-summary-grid">
+      <div class="eval-card highlight">
+        <span class="eval-card-label">Accuracy</span>
+        <span class="eval-card-value">${pct(res.accuracy)}</span>
+        <span class="eval-card-sub">(${res.correct}/${res.total})</span>
+      </div>
+      <div class="eval-card">
+        <span class="eval-card-label">Macro F1</span>
+        <span class="eval-card-value">${pct(res.macroF1)}</span>
+      </div>
+      <div class="eval-card">
+        <span class="eval-card-label">Macro Precision</span>
+        <span class="eval-card-value">${pct(res.macroPrecision)}</span>
+      </div>
+      <div class="eval-card">
+        <span class="eval-card-label">Macro Recall</span>
+        <span class="eval-card-value">${pct(res.macroRecall)}</span>
+      </div>
+    </div>
+
+    ${matrixHtml}
+    ${metricsTableHtml}
+
+    <div class="eval-note">
+      <b>Evaluation Limitations:</b>
+      <p>Evaluation uses leave-one-out cross-validation on ${res.total} existing samples. Results are preliminary and may not represent performance on new users, recording sessions, camera angles, or lighting conditions. Independent testing data is needed to estimate generalization reliably.</p>
+      <small>Note: LOOCV evaluates static landmark feature vectors under isolated neighbor voting. It does not evaluate temporal factors of the live webcam pipeline (confidence gating & streak debouncing).</small>
+    </div>
+  `;
+}
+
+function runEvaluation() {
+  if (!mlEvalOutput || !mlEvalRun) return;
+
+  if (mlSamples.length < 6) {
+    mlEvalOutput.innerHTML = `
+      <div class="eval-state eval-empty">
+        <p>Insufficient samples for evaluation.</p>
+        <small>At least 6 samples are required for k=5 LOOCV (currently: ${mlSamples.length}). Capture or load samples first.</small>
+      </div>
+    `;
+    return;
+  }
+
+  mlEvalRun.disabled = true;
+  mlEvalOutput.innerHTML = `
+    <div class="eval-state eval-loading">
+      <div class="eval-spinner"></div>
+      <p>Running Leave-One-Out Cross-Validation...</p>
+      <small>Evaluating ${mlSamples.length} folds with isolated models...</small>
+    </div>
+  `;
+
+  setTimeout(() => {
+    try {
+      const results = runLeaveOneOutCV(mlSamples, 5);
+      renderEvaluationResults(results);
+    } catch (err) {
+      console.error('[Eval] Evaluation failed:', err);
+      mlEvalOutput.innerHTML = `
+        <div class="eval-state eval-error">
+          <b>Evaluation Failed</b>
+          <p>${escapeHtml(err.message)}</p>
+        </div>
+      `;
+    } finally {
+      mlEvalRun.disabled = false;
+    }
+  }, 40);
+}
+
+if (mlEvalRun) {
+  mlEvalRun.onclick = runEvaluation;
+}
+
+updateMLCount();
+loadInitialDataset();
 let camOn = false;
 let lastVideoTime = -1;
 let perc = { hands: [] };
 
-async function startCamera() {
+const STORAGE_KEY_MODE = 'holohand_preferred_mode';
+
+function stopCamera() {
+  if (video.srcObject) {
+    const tracks = video.srcObject.getTracks ? video.srcObject.getTracks() : [];
+    tracks.forEach((track) => track.stop());
+    video.srcObject = null;
+  }
+  camOn = false;
+  latestHands = [];
+  perc = { hands: [] };
+  ui.feed = false;
+  $('t-feed')?.classList.remove('on');
+  document.body.classList.remove('feed');
+}
+
+async function startCamera(isAutoResume = false) {
+  localStorage.setItem(STORAGE_KEY_MODE, 'camera');
   $('start').classList.add('gone');
   setTracking('Starting…', 'warn');
   if (!navigator.mediaDevices?.getUserMedia || !window.isSecureContext) {
-    enterMouseMode('Camera needs http://localhost or https.');
+    enterMouseMode('Camera needs http://localhost or https.', false);
     return;
   }
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' }, audio: false });
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
+      audio: false
+    });
     video.srcObject = stream;
     await video.play();
     camOn = true;
     ui.feed = true;
-    $('t-feed').classList.add('on');
+    $('t-feed')?.classList.add('on');
     document.body.classList.add('feed');
   } catch (e) {
     console.warn(e);
-    enterMouseMode(e && e.name === 'NotAllowedError' ? 'Camera permission denied. Allow it in the address bar and reload.' : 'No camera found.');
+    enterMouseMode(
+      e && e.name === 'NotAllowedError'
+        ? 'Camera permission denied. Allow it in the address bar and reload.'
+        : 'No camera found.',
+      false
+    );
     return;
   }
   setTracking('Loading hand model…', 'warn');
@@ -154,6 +524,7 @@ async function startCamera() {
     await tracker.init();
     setTracking('Hands on', 'ok');
     showBanner('');
+    if (!isAutoResume) toast('Hand tracking active');
   } catch (e) {
     console.error(e);
     setTracking('Mouse only', 'warn');
@@ -161,7 +532,13 @@ async function startCamera() {
   }
 }
 
-function enterMouseMode(msg) {
+function enterMouseMode(msg, remember = true) {
+  if (remember) {
+    localStorage.setItem(STORAGE_KEY_MODE, 'mouse');
+  }
+  if (camOn) {
+    stopCamera();
+  }
   setTracking('Mouse only', 'warn');
   if (msg) showBanner(msg + ' Mouse controls are on.', true);
 }
@@ -169,15 +546,79 @@ function enterMouseMode(msg) {
 function setTracking(text, cls) {
   trackingState = text;
   const el = $('s-track');
-  el.textContent = text;
-  el.className = cls || '';
+  if (el) {
+    el.textContent = text;
+    el.className = cls || '';
+  }
 }
 
-$('btn-cam').onclick = startCamera;
+function openStartModal() {
+  $('start').classList.remove('gone');
+}
+
+function closeStartModal() {
+  $('start').classList.add('gone');
+  if (!camOn && trackingState === 'Off') {
+    enterMouseMode('', true);
+  }
+}
+
+$('btn-cam').onclick = () => {
+  startCamera(false);
+};
+
 $('btn-mouse').onclick = () => {
   $('start').classList.add('gone');
-  enterMouseMode('');
+  enterMouseMode('', true);
+  toast('Mouse controls active');
 };
+
+const btnCloseStart = $('btn-close-start');
+if (btnCloseStart) {
+  btnCloseStart.onclick = closeStartModal;
+}
+
+const tMode = $('t-mode');
+if (tMode) {
+  tMode.onclick = () => {
+    if ($('start').classList.contains('gone')) {
+      openStartModal();
+    } else {
+      closeStartModal();
+    }
+  };
+}
+
+const sTrack = $('s-track');
+if (sTrack) {
+  sTrack.style.cursor = 'pointer';
+  sTrack.title = 'Click to switch input mode (Camera / Mouse)';
+  sTrack.onclick = openStartModal;
+}
+
+const startModal = $('start');
+if (startModal) {
+  startModal.addEventListener('pointerdown', (e) => {
+    if (e.target === startModal) {
+      closeStartModal();
+    }
+  });
+}
+
+addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && startModal && !startModal.classList.contains('gone')) {
+    closeStartModal();
+  }
+});
+
+// Auto-restore saved mode on page load/refresh
+const savedMode = localStorage.getItem(STORAGE_KEY_MODE);
+if (savedMode === 'mouse') {
+  $('start').classList.add('gone');
+  enterMouseMode('', false);
+} else if (savedMode === 'camera') {
+  startCamera(true);
+}
 
 /** raw camera landmark -> viewport 0..1 (mirrored, matches object-fit: cover) */
 function mapPoint(p) {
@@ -501,7 +942,45 @@ function frame(now) {
   if (camOn && tracker.ready && video.readyState >= 2 && video.currentTime !== lastVideoTime) {
     lastVideoTime = video.currentTime;
     const hands = tracker.detect(video, now);
-    perc = engine.update(hands, t, mapPoint, (video.videoWidth || 16) / (video.videoHeight || 9));
+    latestHands = hands;
+
+    perc = engine.update(
+      hands,
+      t,
+      mapPoint,
+      (video.videoWidth || 16) / (video.videoHeight || 9)
+    );
+
+    // KNN inference: override gesture labels when predictions are stable.
+    for (const hand of perc.hands) {
+      if (hand.held || datasetLoading) continue;
+
+      const rawHand = hands.find((h) => h.label === hand.id)
+        ?? (hands.length === 1 ? hands[0] : null);
+
+      if (!rawHand) continue;
+
+      const features = extractFeatures(rawHand.landmarks);
+      if (!features) continue;
+
+      const prediction = knn.predict(features);
+      if (!prediction || prediction.score < 0.6) continue;
+
+      let state = mlPredictionStates.get(hand.id);
+
+      if (!state || state.label !== prediction.label) {
+        state = { label: prediction.label, streak: 1 };
+      } else {
+        state.streak++;
+      }
+
+      mlPredictionStates.set(hand.id, state);
+
+      // Require repeated predictions before switching gestures.
+      if (state.streak >= 3) {
+        hand.gesture = prediction.label;
+      }
+    }
   }
   control(t, dt);
 

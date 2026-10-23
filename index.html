@@ -46,6 +46,43 @@
       </ul>
     </section>
 
+    <section class="ml-lab">
+      <h4>ML LAB · KNN CLASSIFIER</h4>
+      <p class="ml-help">Collect labeled hand-landmark samples.</p>
+
+      <label for="ml-gesture">Gesture label</label>
+      <select id="ml-gesture">
+        <option value="OPEN">OPEN</option>
+        <option value="FIST">FIST</option>
+        <option value="PEACE">PEACE</option>
+        <option value="POINT">POINT</option>
+        <option value="PINCH">PINCH</option>
+      </select>
+
+      <button id="ml-capture">Capture sample</button>
+      <div id="ml-count">Total samples: 0</div>
+      <div id="ml-status">Start the camera to collect samples.</div>
+      <button id="ml-export">Export dataset JSON</button>
+      <button id="ml-clear">Clear dataset</button>
+    </section>
+
+    <section class="ml-eval" id="ml-eval-section">
+      <div class="ml-eval-header">
+        <h4>ML EVALUATION · LOOCV</h4>
+        <span class="tag" id="eval-k-tag">k=5</span>
+      </div>
+      <p class="ml-help">Offline leave-one-out cross-validation across all dataset samples.</p>
+
+      <button id="ml-eval-run" class="eval-btn">Run LOOCV Evaluation</button>
+
+      <div id="ml-eval-output">
+        <div class="eval-state eval-empty">
+          <p>No evaluation performed yet.</p>
+          <small>Click "Run LOOCV Evaluation" to validate on the current dataset.</small>
+        </div>
+      </div>
+    </section>
+
     <section class="partcard" id="partcard">
       <div class="pc-name"><i id="pc-dot"></i><b id="pc-name">No part selected</b></div>
       <p id="pc-desc">Point at a part, or click one, to read what it does.</p>
@@ -60,6 +97,7 @@
   </aside>
 
   <div id="toolbar">
+    <button id="t-mode" title="Switch input mode (Camera / Mouse)"><svg viewBox="0 0 24 24"><path d="M12 2a4 4 0 0 0-4 4v6a4 4 0 0 0 8 0V6a4 4 0 0 0-4-4zm0 18a7 7 0 0 1-7-7h2a5 5 0 0 0 10 0h2a7 7 0 0 1-7 7zm-1-14h2v5h-2z"/></svg></button>
     <button id="t-feed" class="on" title="Camera background"><svg viewBox="0 0 24 24"><path d="M3 7h3l2-2h8l2 2h3v12H3z"/><circle cx="12" cy="13" r="3.5"/></svg></button>
     <button id="t-skel" class="on" title="Hand skeleton"><svg viewBox="0 0 24 24"><path d="M7 21v-8M11 21V5M15 21V8M19 21v-7M7 13l-3-2"/></svg></button>
     <button id="t-labels" class="on" title="Part labels"><svg viewBox="0 0 24 24"><path d="M4 7h10M4 12h16M4 17h10"/><circle cx="18" cy="7" r="1.6"/></svg></button>
@@ -72,6 +110,7 @@
 
   <div id="start">
     <div class="card">
+      <button id="btn-close-start" class="start-close-btn" title="Close" aria-label="Close">✕</button>
       <div class="logo big"></div>
       <h1>HoloHand</h1>
       <p>Control an exploded 3D model with your bare hands. Your camera stays in the browser, nothing is uploaded.</p>

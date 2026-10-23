@@ -39,10 +39,28 @@ Human Brain (4 lobes, cerebellum, brainstem, corpus callosum, thalamus, hippocam
 | Two hands | Move them apart or together to zoom |
 | Peace sign (hold ~0.3 s) | Jump to the next model |
 
+## Machine Learning Lab & Evaluation
+
+HoloHand includes an in-browser Machine Learning Lab and offline evaluation pipeline:
+- **KNN Classifier (`k=5`)**: Scale-normalized 63-dimensional landmark feature extraction with Euclidean distance and streak debouncing.
+- **ML Lab**: Collect live hand-landmark samples, export datasets as JSON, and retrain the classifier dynamically in-browser.
+- **ML Evaluation (LOOCV)**: Built-in Leave-One-Out Cross-Validation evaluating folds with isolated models, confusion matrix visualization, accuracy, macro-averaged Precision, Recall, and F1 scores.
+- **Mode Persistence**: Remembers your preferred control mode (Camera or Mouse) in `localStorage` so refreshing the page resumes seamlessly without blocking dialogs. Switch modes anytime from the top-right toolbar or tracking badge.
+
+## Testing
+
+Run the automated ML evaluation and integrity test suite:
+
+```bash
+npm test
+```
+
+Tests cover input validation, confusion matrix orientation, zero-denominator edge cases, strict test-sample isolation during cross-validation, and dataset duplicate checks.
+
 ## Mouse and keyboard
 
 Drag = rotate · scroll = zoom · click a part = inspect it · `Space` = explode / assemble · `←` `→` or `1`–`4` = switch model · `R` = reset view.
-Sliders in the left panel control the explosion and its intensity. The top-right buttons toggle camera background, hand skeleton, labels and fullscreen.
+Sliders in the left panel control the explosion and its intensity. The top-right buttons toggle input mode, camera background, hand skeleton, labels, and fullscreen.
 
 ## Tips
 
@@ -52,11 +70,15 @@ Sliders in the left panel control the explosion and its intensity. The top-right
 ## Files
 
 ```
-src/main.js          app loop, hand overlay, gesture -> action, labels, UI
-src/handTracking.js  MediaPipe wrapper (2 hands, local files then CDN, GPU then CPU)
-src/gestureEngine.js landmarks -> gesture, openness, smoothed palm / fingertip / pinch, wrist roll
-src/scene.js         Three.js point-cloud renderer: explode, scatter transition, picking, part dragging
-src/models/          shapes.js (point sampling) + jet / radial / car / brain definitions
+src/main.js                 app loop, hand overlay, gesture -> action, labels, UI, ML integration
+src/knnClassifier.js        KNN gesture classifier & 63D landmark feature extraction
+src/mlEvaluation.js         cross-validation (LOOCV), confusion matrix & per-class metrics
+src/handTracking.js         MediaPipe wrapper (2 hands, local files then CDN, GPU then CPU)
+src/gestureEngine.js        landmarks -> gesture, openness, smoothed palm / fingertip / pinch, wrist roll
+src/scene.js                Three.js point-cloud renderer: explode, scatter transition, picking, part dragging
+src/models/                 shapes.js (point sampling) + jet / radial / car / brain definitions
+scripts/test-evaluation.mjs automated evaluation & integrity test suite
+public/                     gesture dataset JSON, models, and wasm runtime
 ```
 
 To add a model: write a `build()` returning parts (`P(name, description, color, [I(cloud, explodeDirection)])`) and register it in `src/models/index.js`.

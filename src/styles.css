@@ -26,14 +26,17 @@ body.feed #video { display: block; }
 /* ------------------------------------------------ left panel */
 #panel {
   position: fixed; left: 14px; top: 14px; width: 272px; max-height: calc(100vh - 28px);
-  overflow-y: auto; scrollbar-width: none;
+  overflow-y: auto; scrollbar-width: thin; scrollbar-color: rgba(242, 201, 76, 0.3) transparent;
   padding: 14px; border-radius: 16px;
   background: var(--glass); border: 1px solid var(--line);
   backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.45);
   display: flex; flex-direction: column; gap: 12px;
 }
-#panel::-webkit-scrollbar { display: none; }
+#panel::-webkit-scrollbar { width: 5px; }
+#panel::-webkit-scrollbar-track { background: transparent; }
+#panel::-webkit-scrollbar-thumb { background: rgba(242, 201, 76, 0.28); border-radius: 4px; }
+#panel::-webkit-scrollbar-thumb:hover { background: rgba(242, 201, 76, 0.55); }
 .brand { display: flex; align-items: center; gap: 10px; }
 .brand b { display: block; font-size: 15px; letter-spacing: 0.2px; }
 .brand span { color: var(--muted); font-size: 11.5px; }
@@ -116,7 +119,14 @@ input[type="range"]::-moz-range-thumb { width: 11px; height: 11px; border-radius
 /* ------------------------------------------------ start screen */
 #start { position: fixed; inset: 0; display: grid; place-items: center; background: rgba(6, 7, 12, 0.72); backdrop-filter: blur(10px); z-index: 10; transition: opacity 0.3s; }
 #start.gone { opacity: 0; pointer-events: none; }
-#start .card { width: min(380px, 90vw); text-align: center; padding: 28px 26px 22px; border-radius: 20px; background: rgba(16, 18, 32, 0.9); border: 1px solid var(--line); }
+#start .card { position: relative; width: min(380px, 90vw); text-align: center; padding: 28px 26px 22px; border-radius: 20px; background: rgba(16, 18, 32, 0.9); border: 1px solid var(--line); }
+.start-close-btn {
+  position: absolute; top: 14px; right: 14px; width: 28px; height: 28px; border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08); border: 1px solid var(--line); color: var(--muted);
+  display: grid; place-items: center; font-size: 13px; line-height: 1; cursor: pointer; padding: 0;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.start-close-btn:hover { background: rgba(255, 255, 255, 0.16); color: var(--text); border-color: rgba(255, 255, 255, 0.25); }
 #start h1 { font-size: 24px; font-weight: 650; }
 #start p { color: #b6bbd0; margin: 8px 0 18px; line-height: 1.45; font-size: 13px; }
 #start button { display: block; width: 100%; border-radius: 12px; padding: 11px; font-size: 13.5px; margin-top: 8px; }
@@ -131,3 +141,312 @@ input[type="range"]::-moz-range-thumb { width: 11px; height: 11px; border-radius
   #chips { max-width: calc(100vw - 20px); overflow-x: auto; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+
+/* Machine learning lab panel */
+.ml-lab {
+  padding: 11px;
+  border: 1px solid rgba(242, 201, 76, 0.3);
+  border-radius: 12px;
+  background: rgba(242, 201, 76, 0.055);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ml-lab h4 {
+  color: var(--gold);
+  font-size: 11px;
+  letter-spacing: 0.7px;
+}
+
+.ml-help,
+#ml-status,
+#ml-count {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.ml-lab label {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.ml-lab select,
+.ml-lab button {
+  width: 100%;
+  padding: 8px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--text);
+  font: inherit;
+}
+
+.ml-lab select option {
+  background: #171927;
+  color: white;
+}
+
+.ml-lab button {
+  cursor: pointer;
+}
+
+.ml-lab button:hover {
+  border-color: var(--gold);
+}
+
+#ml-status {
+  overflow-wrap: anywhere;
+}
+
+/* ------------------------------------------------ ML evaluation panel */
+.ml-eval {
+  padding: 12px;
+  border: 1px solid rgba(79, 227, 224, 0.35);
+  border-radius: 12px;
+  background: rgba(79, 227, 224, 0.05);
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.ml-eval-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.ml-eval-header h4 {
+  color: #4fe3e0;
+  font-size: 11px;
+  letter-spacing: 0.7px;
+}
+
+.ml-eval-header .tag {
+  background: rgba(79, 227, 224, 0.16);
+  color: #4fe3e0;
+}
+
+.eval-btn {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(79, 227, 224, 0.45);
+  background: rgba(79, 227, 224, 0.14);
+  color: #e6ffff;
+  font-weight: 600;
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.eval-btn:hover {
+  background: rgba(79, 227, 224, 0.25);
+  border-color: #4fe3e0;
+  color: #fff;
+}
+
+.eval-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+#ml-eval-output {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Evaluation States */
+.eval-state {
+  padding: 10px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+.eval-empty {
+  text-align: center;
+}
+
+.eval-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  text-align: center;
+}
+
+.eval-spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(79, 227, 224, 0.25);
+  border-top-color: #4fe3e0;
+  border-radius: 50%;
+  animation: evalSpin 0.8s linear infinite;
+}
+
+@keyframes evalSpin {
+  to { transform: rotate(360deg); }
+}
+
+.eval-error {
+  border: 1px solid rgba(255, 110, 130, 0.4);
+  background: rgba(60, 20, 28, 0.6);
+  color: #ffadb8;
+}
+
+.eval-error b {
+  color: #ff6e82;
+  display: block;
+  margin-bottom: 3px;
+}
+
+/* Results Display */
+.eval-meta {
+  font-size: 10px;
+  color: var(--muted);
+  line-height: 1.35;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--line);
+}
+
+.eval-summary-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.eval-card {
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 8px;
+}
+
+.eval-card.highlight {
+  border-color: rgba(79, 227, 224, 0.4);
+  background: rgba(79, 227, 224, 0.09);
+}
+
+.eval-card-label {
+  display: block;
+  font-size: 10px;
+  color: var(--muted);
+  margin-bottom: 2px;
+}
+
+.eval-card-value {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.eval-card.highlight .eval-card-value {
+  color: #4fe3e0;
+}
+
+.eval-card-sub {
+  font-size: 9.5px;
+  color: var(--muted);
+  margin-left: 2px;
+  font-weight: normal;
+}
+
+/* Tables */
+.eval-table-title {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-top: 4px;
+}
+
+.eval-table-wrap {
+  overflow-x: auto;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: rgba(0, 0, 0, 0.22);
+}
+
+.eval-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 9.5px;
+  text-align: center;
+}
+
+.eval-table th,
+.eval-table td {
+  padding: 4px 5px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  white-space: nowrap;
+}
+
+.eval-table th {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.eval-table th.th-left,
+.eval-table td.td-left {
+  text-align: left;
+}
+
+.eval-table tr.total-row td {
+  border-top: 1px solid rgba(255, 255, 255, 0.16);
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--text);
+}
+
+/* Confusion Matrix cell formatting */
+.matrix-cell {
+  min-width: 24px;
+  font-variant-numeric: tabular-nums;
+}
+
+.matrix-diag {
+  background: rgba(111, 240, 168, 0.18);
+  color: #6ff0a8;
+  font-weight: 700;
+}
+
+.matrix-err {
+  background: rgba(255, 110, 130, 0.18);
+  color: #ff9da9;
+  font-weight: 600;
+}
+
+.matrix-zero {
+  color: rgba(255, 255, 255, 0.18);
+}
+
+/* Evaluation Note / Disclaimer */
+.eval-note {
+  font-size: 9.5px;
+  color: #b0b6cc;
+  background: rgba(242, 201, 76, 0.08);
+  border: 1px solid rgba(242, 201, 76, 0.28);
+  border-radius: 8px;
+  padding: 7px 9px;
+  line-height: 1.35;
+}
+
+.eval-note b {
+  color: var(--gold);
+  display: block;
+  margin-bottom: 3px;
+}
+
+.eval-note small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-style: italic;
+}
